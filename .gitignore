@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+env/
+
+# Flask
+instance/
+.webassets-cache
+
+# Archivos de configuración
+.env
+*.pyc
+
+# Directorios de uploads y pdfs
+static/uploads/*
+static/pdfs/*
+!static/uploads/.gitkeep
+!static/pdfs/.gitkeep
+
+# Logs
+*.log
+
+# IDEs
+.vscode/
+.idea/

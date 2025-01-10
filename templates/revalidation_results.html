@@ -1,0 +1,168 @@
+<!-- templates/revalidation_results.html -->
+<!-- templates/revalidation_results.html -->
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Resultados de Revalidación</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        .modified-cell {
+            background-color: #e8f4ff;
+            position: relative;
+        }
+        .modified-indicator {
+            position: absolute;
+            top: 0;
+            right: 5px;
+            font-size: 0.75rem;
+            color: #0d6efd;
+            font-style: italic;
+        }
+        .btn-success {
+            background-color: #28a745;
+            border-color: #28a745;
+        }
+        .btn-success:hover {
+            background-color: #218838;
+            border-color: #1e7e34;
+        }
+        .btn-primary {
+            background-color: #007bff;
+            border-color: #007bff;
+        }
+        .btn-primary:hover {
+            background-color: #0056b3;
+            border-color: #0056b3;
+        }
+        .loading {
+            display: none;
+            margin-left: 10px;
+        }
+        .loading.active {
+            display: inline-block;
+        }
+        .validation-table {
+            margin-top: 20px;
+            margin-bottom: 30px;
+        }
+        .table th {
+            background-color: #f8f9fa;
+        }
+    </style>
+</head>
+<body>
+    <div class="container py-5">
+        <!-- Mensaje de éxito -->
+        <div class="alert alert-success mb-4">
+            <h4 class="alert-heading">¡Validación Exitosa!</h4>
+            <p id="validationMessage"></p>
+        </div>
+
+        <!-- Tabla de datos validados -->
+        <div class="validation-table">
+            <h5 class="mb-3">Datos Validados:</h5>
+            <table class="table table-bordered">
+                <thead>
+                    <tr>
+                        <th>Campo</th>
+                        <th>Valor Original</th>
+                        <th>Valor Validado</th>
+                    </tr>
+                </thead>
+                <tbody id="validationTableBody">
+                    <!-- Se llenará dinámicamente -->
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Botones de acción -->
+        <div class="d-flex justify-content-end gap-3 mt-4">
+            <button id="generateBtn" class="btn btn-success">
+                <span>Generar QR y Guardar</span>
+                <div class="spinner-border spinner-border-sm loading" role="status">
+                    <span class="visually-hidden">Cargando...</span>
+                </div>
+            </button>
+            <button id="newScanBtn" class="btn btn-primary">Escanear Otro</button>
+        </div>
+    </div>
+
+    <script>
+        // Obtener datos de sessionStorage
+        const revalidationData = JSON.parse(sessionStorage.getItem('revalidationData'));
+        
+        // Mostrar mensaje de validación
+        const validationMessage = document.getElementById('validationMessage');
+        if (revalidationData && revalidationData.data && revalidationData.data.Nota) {
+            validationMessage.textContent = revalidationData.data.Nota;
+        } else {
+            validationMessage.textContent = 'La validación fue exitosa.';
+        }
+
+        // Llenar la tabla de validación
+        const tableBody = document.getElementById('validationTableBody');
+        const originalData = revalidationData?.data?.modificaciones || [];
+        const validatedData = {
+            'Código': revalidationData?.data?.Codigo,
+            'Nombre': revalidationData?.data?.Nombre
+        };
+
+        // Crear filas para cada campo modificado
+        originalData.forEach(mod => {
+            const row = document.createElement('tr');
+            row.innerHTML = `
+                <td>${mod.campo}</td>
+                <td>${mod.valor_anterior}</td>
+                <td class="modified-cell">
+                    ${mod.campo === 'Código' ? validatedData['Código'] : validatedData['Nombre']}
+                    <span class="modified-indicator">modificado manual</span>
+                </td>
+            `;
+            tableBody.appendChild(row);
+        });
+
+        // Botón Generar QR y Guardar
+        const generateBtn = document.getElementById('generateBtn');
+        const loading = generateBtn.querySelector('.loading');
+        
+        generateBtn.addEventListener('click', async () => {
+            try {
+                generateBtn.disabled = true;
+                loading.classList.add('active');
+                
+                const response = await fetch('/register', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        ...revalidationData.data,
+                        codigo_validado: validatedData['Código'],
+                        nombre_validado: validatedData['Nombre']
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error('Error al generar documentos');
+                }
+
+                window.location.href = '/review_pdf';
+            } catch (error) {
+                console.error('Error:', error);
+                alert('Error al generar documentos: ' + error.message);
+                generateBtn.disabled = false;
+                loading.classList.remove('active');
+            }
+        });
+
+        // Botón Escanear Otro
+        const newScanBtn = document.getElementById('newScanBtn');
+        newScanBtn.addEventListener('click', () => {
+            window.location.href = '/';
+        });
+    </script>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

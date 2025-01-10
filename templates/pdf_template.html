@@ -9,113 +9,188 @@
             font-family: Arial, sans-serif;
             margin: 40px;
             color: #333;
+            line-height: 1.6;
         }
         .header {
             text-align: center;
             margin-bottom: 30px;
+            border-bottom: 2px solid #2c3e50;
+            padding-bottom: 20px;
         }
         .logo {
-            max-width: 300px;
-            margin-bottom: 20px;
+            max-width: 200px;
+            margin-bottom: 15px;
         }
-        .header h1 {
-            font-size: 24px;
+        .title {
             color: #2c3e50;
-            margin-bottom: 10px;
+            font-size: 24px;
+            margin: 10px 0;
+        }
+        .subtitle {
+            color: #34495e;
+            font-size: 18px;
         }
         .image-container {
             text-align: center;
-            margin-bottom: 30px;
+            margin: 20px 0;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
         }
         .image-container img {
             max-width: 100%;
             height: auto;
         }
-        .table-container {
-            margin-bottom: 30px;
-        }
-        table {
+        .data-table {
             width: 100%;
             border-collapse: collapse;
-            margin-bottom: 20px;
+            margin: 20px 0;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.2);
         }
-        th, td {
-            border: 1px solid #ddd;
+        .data-table th {
+            background-color: #2c3e50;
+            color: white;
             padding: 12px;
             text-align: left;
+            font-weight: normal;
         }
-        th {
+        .data-table td {
+            padding: 12px;
+            border: 1px solid #ddd;
+        }
+        .data-table tr:nth-child(even) {
             background-color: #f8f9fa;
-            font-weight: bold;
-            width: 20%;
-        }
-        td {
-            width: 40%;
         }
         .modified-field {
-            color: #dc3545;
+            background-color: #e8f4ff;
+            position: relative;
+        }
+        .modified-indicator {
+            position: absolute;
+            top: 4px;
+            right: 4px;
+            font-size: 10px;
+            color: #0066cc;
+            font-style: italic;
+        }
+        .validation-note {
+            margin: 20px 0;
+            padding: 15px;
+            background-color: #f8f9fa;
+            border-left: 4px solid #2c3e50;
+            border-radius: 4px;
+        }
+        .note-title {
+            color: #2c3e50;
+            margin-bottom: 10px;
+            font-weight: bold;
         }
         .footer {
             margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid #ddd;
             font-size: 12px;
             color: #666;
-            text-align: right;
-            border-top: 1px solid #ddd;
-            padding-top: 20px;
         }
-        .validation-note {
-            margin-top: 20px;
-            padding: 15px;
+        .qr-section {
+            text-align: center;
+            margin: 30px 0;
+            page-break-inside: avoid;
+        }
+        .qr-code {
+            width: 150px;
+            height: 150px;
+            margin: 0 auto;
+        }
+        .qr-text {
+            font-size: 12px;
+            color: #666;
+            margin-top: 10px;
+        }
+        .process-status {
+            margin: 20px 0;
+            padding: 10px;
             background-color: #f8f9fa;
-            border-radius: 5px;
-            border: 1px solid #ddd;
+            border-radius: 4px;
         }
-        .validation-note h3 {
-            margin-top: 0;
-            color: #2c3e50;
+        .status-item {
+            display: flex;
+            align-items: center;
+            margin: 5px 0;
+        }
+        .status-icon {
+            width: 20px;
+            height: 20px;
+            margin-right: 10px;
         }
     </style>
 </head>
 <body>
     <div class="header">
         <img src="{{ url_for('static', filename='images/logo-oleoflores.png', _external=True) }}" alt="Oleoflores Logo" class="logo">
-        <h2>Registro de Entrada Proveedores</h2>
-        <h3>Extractora Maria la Baja</h3>
+        <h1 class="title">Registro de Entrada Proveedores</h1>
+        <h2 class="subtitle">Extractora Maria la Baja</h2>
     </div>
 
     <div class="image-container">
         <img src="{{ url_for('static', filename='uploads/' ~ image_filename, _external=True) }}" alt="Tiquete">
     </div>
 
-    <div class="table-container">
-        <table>
-            <thead>
-                <tr>
-                    <th>Campo</th>
-                    <th>Información Original</th>
-                    <th>Registro Final</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for row in parsed_data.table_data %}
-                <tr>
-                    <th>{{ row.campo }}</th>
-                    <td>{{ row.original }}</td>
-                    <td {% if row.original != row.sugerido %}class="modified-field"{% endif %}>
-                        {{ row.sugerido }}
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Campo</th>
+                <th>Información Original</th>
+                <th>Registro Final</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in parsed_data.table_data %}
+            <tr>
+                <td><strong>{{ row.campo }}</strong></td>
+                <td>{{ row.original }}</td>
+                {% if row.campo in ['Nombre del Agricultor', 'Código'] and row.sugerido != row.original %}
+                    <td class="modified-field">
+                        {{ revalidation_data.get(row.campo, row.sugerido) }}
+                        <span class="modified-indicator">modificado manual</span>
                     </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
+                {% else %}
+                    <td>{{ row.sugerido }}</td>
+                {% endif %}
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
 
     {% if parsed_data.nota %}
     <div class="validation-note">
-        <h3>Nota de Validación:</h3>
+        <div class="note-title">Nota de Validación:</div>
         <p>{{ parsed_data.nota }}</p>
     </div>
     {% endif %}
+
+    {% if revalidation_data and revalidation_data.nota %}
+    <div class="validation-note">
+        <div class="note-title">Nota de Revalidación:</div>
+        <p>{{ revalidation_data.nota }}</p>
+    </div>
+    {% endif %}
+
+    <div class="process-status">
+        <div class="note-title">Estado del Proceso:</div>
+        <div class="status-item">
+            ✓ Registro inicial completado
+        </div>
+        <div class="status-item">
+            ◯ Pendiente: Peso bruto
+        </div>
+        <div class="status-item">
+            ◯ Pendiente: Clasificación de fruta
+        </div>
+        <div class="status-item">
+            ◯ Pendiente: Cierre de proceso
+        </div>
+    </div>
 
     <div class="footer">
         <p>Fecha de Procesamiento: {{ fecha_procesamiento }}</p>
@@ -123,52 +198,10 @@
         <p>Fecha de Emisión: {{ fecha_emision }}</p>
         <p>Hora de Emisión: {{ hora_emision }}</p>
     </div>
-<!-- Actualización de pdf_template.html -->
-<div class="qr-section">
-    <img src="{{ qr_code_url }}" alt="QR Code" class="qr-code">
-    <p class="qr-text">Escanee para ver detalles</p>
-</div>
 
-<style>
-.qr-section {
-    text-align: center;
-    margin: 20px 0;
-    page-break-inside: avoid;
-}
-.qr-code {
-    width: 150px;
-    height: 150px;
-}
-.qr-text {
-    font-size: 12px;
-    color: #666;
-    margin-top: 5px;
-}
-</style>
-<!-- Agregar antes del </body> -->
-<div class="qr-container">
-    <img src="{{ url_for('static', filename=qr_filename, _external=True) }}" 
-         alt="Código QR" class="qr-image">
-    <p class="qr-text">Escanea para verificar tiquete</p>
-</div>
-
-<style>
-.qr-container {
-    position: fixed;
-    bottom: 100px;
-    right: 40px;
-    text-align: center;
-}
-.qr-image {
-    width: 120px;
-    height: 120px;
-    margin-bottom: 5px;
-}
-.qr-text {
-    font-size: 10px;
-    color: #666;
-    margin: 0;
-}
-</style>
+    <div class="qr-section">
+        <img src="{{ url_for('static', filename=qr_filename, _external=True) }}" alt="Código QR" class="qr-code">
+        <p class="qr-text">Escanea para seguimiento del proceso</p>
+    </div>
 </body>
 </html>

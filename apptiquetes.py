@@ -160,55 +160,99 @@ def review():
         timestamp=timestamp
     )
 
+# En apptiquetes.py, ruta update_data
 @app.route('/update_data', methods=['POST'])
 def update_data():
     try:
+        logger.info("Iniciando proceso de update_data")
         updated_data = request.get_json()
-        table_data = updated_data.get('table_data', [])
+        logger.info(f"Datos recibidos: {updated_data}")
         
-        # Preparar payload
-        payload = {
-            "json": {
-                "modificaciones": []
-            }
-        }
+        table_data = updated_data.get('table_data', [])
+        modifications = []
         
         for row in table_data:
             if row.get('campo') in ['Nombre del Agricultor', 'Código']:
                 valor_anterior = str(row.get('original', '')).strip()
                 valor_modificado = str(row.get('sugerido', '')).strip()
-                
-                if valor_modificado != '-' and valor_anterior != valor_modificado:
-                    payload["json"]["modificaciones"].append({
+                if valor_modificado != valor_anterior:
+                    modifications.append({
                         "campo": row['campo'],
                         "valor_anterior": valor_anterior,
                         "valor_modificado": valor_modificado
                     })
+
+        if modifications:
+            try:
+                response = requests.post(
+                    REVALIDATION_WEBHOOK_URL,
+                    json={"json": {"modificaciones": modifications}},
+                    headers={'Content-Type': 'application/json'},
+                    timeout=30
+                )
+                
+                logger.info(f"Respuesta del webhook - Status: {response.status_code}")
+                logger.info(f"Respuesta del webhook - Texto: {response.text}")
+                
+                if response.status_code == 200:
+                    try:
+                        # Intentar parsear la respuesta como JSON
+                        webhook_data = response.json()
+                    except ValueError:
+                        # Si no es JSON válido, intentar parsear el texto estructurado
+                        webhook_text = response.text
+                        if isinstance(webhook_text, str):
+                            # Parsear la respuesta estructurada
+                            lines = webhook_text.split('\n')
+                            webhook_data = {
+                                'Body': {
+                                    'Resultado': next((l.replace('Resultado:', '').strip() for l in lines if 'Resultado:' in l), ''),
+                                    'Codigo': next((l.replace('Codigo:', '').strip().strip('"') for l in lines if 'Codigo:' in l), ''),
+                                    'Nombre': next((l.replace('Nombre:', '').strip().strip('"') for l in lines if 'Nombre:' in l), ''),
+                                    'Nota': next((l.replace('Nota:', '').strip() for l in lines if 'Nota:' in l), '')
+                                },
+                                'Status': response.status_code
+                            }
+
+                    # Estructurar la respuesta final
+                    return jsonify({
+                        "status": "success",
+                        "data": {
+                            "Result": webhook_data.get('Body', {}).get('Resultado', ''),
+                            "Codigo": webhook_data.get('Body', {}).get('Codigo', ''),
+                            "Nombre": webhook_data.get('Body', {}).get('Nombre', ''),
+                            "Nota": webhook_data.get('Body', {}).get('Nota', ''),
+                            "modificaciones": modifications,
+                            "webhook_status": response.status_code
+                        }
+                    })
+                else:
+                    raise Exception(f"Error en webhook: {response.text}")
+                    
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Error en petición al webhook: {str(e)}")
+                return jsonify({
+                    "status": "error",
+                    "message": f"Error de conexión: {str(e)}"
+                }), 500
+            except Exception as e:
+                logger.error(f"Error procesando respuesta: {str(e)}")
+                return jsonify({
+                    "status": "error",
+                    "message": str(e)
+                }), 500
         
-        if payload["json"]["modificaciones"]:
-            logger.info(f"Enviando payload: {payload}")
+        return jsonify({
+            "status": "success",
+            "message": "No se requieren cambios para revalidación"
+        })
             
-            response = requests.post(
-                REVALIDATION_WEBHOOK_URL,
-                json=payload,
-                headers={'Content-Type': 'application/json'}
-            )
-            
-            if response.status_code == 200:
-                try:
-                    data = response.json()
-                    return jsonify({"result": "revalidated", "data": data})
-                except:
-                    return jsonify({"result": "error", "message": response.text})
-            
-            logger.error(f"Error: {response.text}")
-            return jsonify({"result": "error", "message": "Error en revalidación"})
-            
-        return jsonify({"result": "ok", "message": "Sin cambios"})
-        
     except Exception as e:
-        logger.error(f"Error: {str(e)}")
-        return jsonify({"result": "error", "message": str(e)}), 500
+        logger.error(f"Error general: {str(e)}")
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), 500
 
 @app.route('/processing', methods=['GET'])
 def processing_screen():
@@ -236,172 +280,129 @@ def generate_qr_image(codigo, nombre, fruta):
     return qr_filename
 
 
-def generate_pdf(parsed_data, image_filename, fecha_procesamiento, hora_procesamiento,
-                 codigo='', nombre_agricultor='', fruta=''):
+def generate_pdf(parsed_data, image_filename, fecha_procesamiento, hora_procesamiento, revalidation_data=None):
     """
-    Genera un PDF a partir de los datos del tiquete (incluyendo la tabla de tres columnas),
-    usando la plantilla 'pdf_template.html'. Además incrusta un QR si se proporcionan
-    código, nombre y fruta.
+    Genera un PDF a partir de los datos del tiquete.
     """
-    now = datetime.now()
-    fecha_emision = now.strftime("%Y-%m-%d")
-    hora_emision = now.strftime("%H:%M:%S")
-    
-    # >>> NUEVO: Generar QR (opcional, si hay código y nombre)
-    qr_filename = ""
-    if codigo and nombre_agricultor and fruta:
-        qr_filename = generate_qr_image(codigo, nombre_agricultor, fruta)
-    
-    # Renderizar la plantilla HTML con los datos
-    rendered = render_template(
-        'pdf_template.html',
-        parsed_data=parsed_data,
-        image_filename=image_filename,
-        fecha_procesamiento=fecha_procesamiento,
-        hora_procesamiento=hora_procesamiento,
-        fecha_emision=fecha_emision,
-        hora_emision=hora_emision,
-        # >>> NUEVO: pasar el qr_filename a la plantilla (si deseas mostrarlo)
-        qr_filename=qr_filename
-    )
-    
-    # Crear un archivo temporal para el PDF
-    with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as pdf_file:
-        HTML(
-            string=rendered,
-            base_url=request.base_url
-        ).write_pdf(
-            pdf_file.name,
-            presentational_hints=True,
-            optimize_size=('fonts', 'images')
+    try:
+        logger.info("Iniciando generación de PDF")
+        logger.info(f"Datos de revalidación: {revalidation_data}")
+        
+        now = datetime.now()
+        fecha_emision = now.strftime("%Y-%m-%d")
+        hora_emision = now.strftime("%H:%M:%S")
+        
+        # Generar QR con los datos validados
+        qr_data = {
+            "codigo": revalidation_data.get('Código') if revalidation_data else parsed_data.get('codigo', ''),
+            "nombre": revalidation_data.get('Nombre del Agricultor') if revalidation_data else parsed_data.get('nombre_agricultor', ''),
+            "fecha": fecha_procesamiento
+        }
+        
+        qr_filename = f"qr_{qr_data['codigo']}_{int(time.time())}.png"
+        qr_path = os.path.join(app.static_folder, qr_filename)
+        generate_qr(str(qr_data), qr_path)
+        
+        # Renderizar la plantilla HTML
+        rendered = render_template(
+            'pdf_template.html',
+            parsed_data=parsed_data,
+            revalidation_data=revalidation_data,
+            image_filename=image_filename,
+            fecha_procesamiento=fecha_procesamiento,
+            hora_procesamiento=hora_procesamiento,
+            fecha_emision=fecha_emision,
+            hora_emision=hora_emision,
+            qr_filename=qr_filename
         )
         
-        # Al cerrar, pdf_file.name es el path final
-        temp_pdf_path = pdf_file.name
-    
-    # >>> NUEVO: renombrar el PDF a "YYYY-MM-DD_codigo_agricultor_fruta.pdf" si corresponde
-    date_str = datetime.now().strftime("%Y-%m-%d")
-    agricultor_sanitized = nombre_agricultor.replace(" ", "") if nombre_agricultor else "NA"
-    fruta_sanitized = fruta.replace(" ", "") if fruta else "fruta"
-    
-    custom_pdf_name = f"{date_str}_{codigo}_{agricultor_sanitized}_{fruta_sanitized}.pdf"
-    final_pdf_path = os.path.join(app.config['PDF_FOLDER'], custom_pdf_name)
-    
-    os.rename(temp_pdf_path, final_pdf_path)
-    
-    return custom_pdf_name  # retornamos solo el nombre del PDF
-
-
-# Lo anterior se mantiene igual hasta el @app.route('/register')...
+        # Generar el PDF
+        pdf_filename = f'tiquete_{qr_data["codigo"]}_{fecha_procesamiento}.pdf'
+        pdf_path = os.path.join(app.config['PDF_FOLDER'], pdf_filename)
+        
+        HTML(
+            string=rendered,
+            base_url=app.static_folder
+        ).write_pdf(pdf_path)
+        
+        logger.info(f"PDF generado exitosamente: {pdf_filename}")
+        
+        return pdf_filename
+        
+    except Exception as e:
+        logger.error(f"Error en generate_pdf: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise Exception(f"Error generando PDF: {str(e)}")
 
 @app.route('/register', methods=['POST'])
 def register():
-    parsed_data = session.get('parsed_data', {})
-    image_filename = session.get('image_filename', '')
-    
-    logger.debug(f"Parsed data from session: {parsed_data}")
-    logger.debug(f"Image filename: {image_filename}")
-    
-    if not parsed_data or not image_filename:
-        logger.error("Faltan datos para registrar.")
-        return render_template('error.html', message="No hay datos para registrar.")
-    
     try:
+        logger.info("Iniciando proceso de registro")
+        data = request.get_json()
+        logger.info(f"Datos recibidos: {data}")
+        
+        parsed_data = session.get('parsed_data', {})
+        image_filename = session.get('image_filename', '')
+        
+        logger.info(f"Datos de sesión - parsed_data: {parsed_data}")
+        logger.info(f"Datos de sesión - image_filename: {image_filename}")
+        
+        if not parsed_data or not image_filename:
+            logger.error("Faltan datos necesarios para el registro")
+            return jsonify({
+                "status": "error",
+                "message": "No hay datos para registrar."
+            }), 400
+
         now = datetime.now()
         fecha_procesamiento = now.strftime("%Y-%m-%d")
         hora_procesamiento = now.strftime("%H:%M:%S")
         
-        table_data = parsed_data.get('table_data', [])
-        logger.debug(f"Table data: {table_data}")
-        
-        registro_data = {}
-        for row in table_data:
-            campo = row.get('campo', '').strip()
-            valor = row.get('sugerido', '').strip()
-            logger.debug(f"Procesando campo: {campo}, valor: {valor}")
-            
-            if campo == 'Fecha':
-                registro_data['fecha'] = valor
-            elif campo == 'Nombre del Agricultor':
-                registro_data['nombre_agricultor'] = valor
-            elif campo == 'Código':
-                registro_data['codigo'] = valor
-            elif campo == 'Placa':
-                registro_data['placa'] = valor
-            elif campo == 'Cantidad de Racimos':
-                registro_data['cantidad_racimos'] = valor
-            elif campo == 'Total Kilos':
-                registro_data['total_kilos'] = valor
-            elif campo == 'Transportador':
-                registro_data['transportador'] = valor
-        
-        registro_data.update({
-            'nota': parsed_data.get('nota', ''),
-            'fecha_procesamiento': fecha_procesamiento,
-            'hora_procesamiento': hora_procesamiento,
-            'imagen': image_filename
-        })
-        
-        logger.debug(f"Registro data antes de enviar: {registro_data}")
-        
-        # Generar QR antes de enviar a Make
-        qr_data = {
-            "codigo": registro_data.get('codigo', ''),
-            "nombre": registro_data.get('nombre_agricultor', ''),
-            "fecha": fecha_procesamiento
-        }
-        qr_filename = f"qr_{registro_data['codigo']}_{int(time.time())}.png"
-        qr_path = os.path.join(app.static_folder, qr_filename)
-        generate_qr(str(qr_data), qr_path)
-        
-        # Agregar ID del QR al registro
-        registro_data['qr_code'] = qr_filename
-        
-        payload = {
-            "registro": registro_data
+        # Preparar datos de revalidación
+        revalidation_data = {
+            'Nombre del Agricultor': data.get('Nombre', ''),
+            'Código': data.get('Codigo', ''),
+            'nota': data.get('Nota', '')
         }
         
-        logger.info(f"Enviando payload a Make: {payload}")
+        logger.info(f"Datos de revalidación preparados: {revalidation_data}")
         
-        response = requests.post(
-            REGISTER_WEBHOOK_URL,
-            json=payload,
-            headers={'Content-Type': 'application/json'},
-            timeout=30
-        )
-        
-        logger.info(f"Respuesta de Make: {response.status_code} - {response.text}")
-        
-        if response.status_code != 200:
-            raise Exception(f"Error en Make: {response.text}")
-        
-        # Generar PDF incluyendo QR
-        session['qr_filename'] = qr_filename  # Guardar para pdf_template
-        pdf_filename = generate_pdf(
-            parsed_data,
-            image_filename,
-            fecha_procesamiento,
-            hora_procesamiento,
-        )
-        session['pdf_filename'] = pdf_filename
-        
-        # Subir PDF a Drive
         try:
-            service = get_drive_service()
-            drive_id = upload_to_drive(service, 
-                                     os.path.join(app.config['PDF_FOLDER'], pdf_filename), 
-                                     'FOLDER_ID')  # Reemplazar con tu ID de carpeta
-            if drive_id:
-                logger.info(f"PDF subido a Drive: {drive_id}")
-        except Exception as e:
-            logger.error(f"Error subiendo a Drive: {str(e)}")
-        
-        return redirect(url_for('review_pdf'))
-        
+            # Generar PDF
+            pdf_filename = generate_pdf(
+                parsed_data=parsed_data,
+                image_filename=image_filename,
+                fecha_procesamiento=fecha_procesamiento,
+                hora_procesamiento=hora_procesamiento,
+                revalidation_data=revalidation_data
+            )
+            
+            logger.info(f"PDF generado exitosamente: {pdf_filename}")
+            
+            # Guardar el nombre del PDF en la sesión
+            session['pdf_filename'] = pdf_filename
+            
+            return jsonify({
+                "status": "success",
+                "message": "Registro completado exitosamente",
+                "pdf_filename": pdf_filename
+            })
+            
+        except Exception as pdf_error:
+            logger.error(f"Error generando PDF: {str(pdf_error)}")
+            logger.error(traceback.format_exc())
+            return jsonify({
+                "status": "error",
+                "message": f"Error generando documentos: {str(pdf_error)}"
+            }), 500
+            
     except Exception as e:
-        logger.error(f"Error en registro: {str(e)}")
+        logger.error(f"Error general en registro: {str(e)}")
         logger.error(traceback.format_exc())
-        return render_template('error.html', message=f"Error al registrar: {str(e)}")
+        return jsonify({
+            "status": "error",
+            "message": f"Error al registrar: {str(e)}"
+        }), 500
     
 @app.route('/review_pdf', methods=['GET'])
 def review_pdf():
@@ -467,6 +468,13 @@ def test_revalidation():
         })
     except Exception as e:
         return jsonify({"error": str(e)})
+
+@app.route('/revalidation_results')
+def revalidation_results():
+    """
+    Renderiza la página de resultados de revalidación
+    """
+    return render_template('revalidation_results.html')
 
 if __name__ == '__main__':
     app.run(debug=True, port=5002)

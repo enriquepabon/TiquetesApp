@@ -4,17 +4,14 @@
 <head>
     <meta charset="UTF-8">
     <title>Revisión del Tiquete</title>
-    <!-- Bootstrap CSS -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
-        /* Estilos de ejemplo, ajústalos a tu gusto */
-        .edited-cell { background-color: #ffeeba; }
-        .edited-note { color: red; font-size: 0.9em; margin-left: 10px; }
-        .validation-note { background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin-top: 20px; }
-        .table th { width: 20%; background-color: #f8f9fa; }
-        .table td { width: 40%; }
-        .editable-cell:focus { outline: 2px solid #007bff; padding: 5px; }
-        .modified-field { position: relative; }
+        .edited-cell { 
+            background-color: #ffeeba; 
+        }
+        .modified-field { 
+            position: relative; 
+        }
         .modified-field::after {
             content: '(Modificado)';
             position: absolute;
@@ -23,9 +20,52 @@
             font-size: 0.8em;
             color: #dc3545;
         }
+        .validation-note { 
+            background-color: #f8f9fa; 
+            padding: 15px; 
+            border-radius: 5px; 
+            margin-top: 20px; 
+        }
+        .table th { 
+            width: 20%; 
+            background-color: #f8f9fa; 
+        }
+        .table td { 
+            width: 40%; 
+        }
+        .loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(255, 255, 255, 0.9);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+        .loading-content {
+            text-align: center;
+        }
+        .spinner-border {
+            width: 3rem;
+            height: 3rem;
+        }
     </style>
 </head>
 <body class="bg-light">
+    <!-- Overlay de carga -->
+    <div id="loadingOverlay" class="loading-overlay">
+        <div class="loading-content">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Procesando...</span>
+            </div>
+            <h2 class="mt-4">Procesando revalidación...</h2>
+            <p>Por favor espere mientras validamos los cambios.</p>
+        </div>
+    </div>
+
     <div class="container py-5">
         <h2 class="mb-4">Revisión del Tiquete</h2>
         
@@ -59,7 +99,7 @@
                 </tbody>
             </table>
             
-            <!-- Nota de validación (si existe) -->
+            <!-- Nota de validación -->
             <div class="validation-note">
                 <h5>Nota de Validación:</h5>
                 <p>{{ parsed_data.nota }}</p>
@@ -81,140 +121,169 @@
         const saveButton = document.getElementById('save-button');
         const cancelButton = document.getElementById('cancel-button');
         const editableInputs = document.querySelectorAll('.sugerido input');
+        const loadingOverlay = document.getElementById('loadingOverlay');
       
         let originalValues = {};
         editableInputs.forEach(input => {
-          const row = input.closest('tr');
-          originalValues[row.dataset.field] = input.value;
+            const row = input.closest('tr');
+            originalValues[row.dataset.field] = input.value;
         });
       
+        function showLoading() {
+            loadingOverlay.style.display = 'flex';
+        }
+      
+        function hideLoading() {
+            loadingOverlay.style.display = 'none';
+        }
+      
         editButton.addEventListener('click', () => {
-          editableInputs.forEach(input => {
-            input.readOnly = false;
-            input.classList.add('table-active');
-          });
-          editButton.classList.add('d-none');
-          registerButton.classList.add('d-none');
-          saveButton.classList.remove('d-none');
-          cancelButton.classList.remove('d-none');
+            editableInputs.forEach(input => {
+                input.readOnly = false;
+                input.classList.add('table-active');
+            });
+            editButton.classList.add('d-none');
+            registerButton.classList.add('d-none');
+            saveButton.classList.remove('d-none');
+            cancelButton.classList.remove('d-none');
         });
       
         cancelButton.addEventListener('click', () => {
-          editableInputs.forEach(input => {
-            const row = input.closest('tr');
-            input.value = originalValues[row.dataset.field];
-            input.readOnly = true;
-            input.classList.remove('table-active');
-            row.classList.remove('modified-field');
-          });
-          editButton.classList.remove('d-none');
-          registerButton.classList.remove('d-none');
-          saveButton.classList.add('d-none');
-          cancelButton.classList.add('d-none');
+            editableInputs.forEach(input => {
+                const row = input.closest('tr');
+                input.value = originalValues[row.dataset.field];
+                input.readOnly = true;
+                input.classList.remove('table-active');
+                row.classList.remove('modified-field');
+            });
+            editButton.classList.remove('d-none');
+            registerButton.classList.remove('d-none');
+            saveButton.classList.add('d-none');
+            cancelButton.classList.add('d-none');
         });
       
         saveButton.addEventListener('click', () => {
-          const tableData = [];
-          let hasChanges = false;
-      
-          editableInputs.forEach(input => {
-            const row = input.closest('tr');
-            const campo = row.dataset.field;
-            const original = row.querySelector('.original').textContent.trim();
-            const sugerido = input.value.trim();
-            if (sugerido !== originalValues[campo]) {
-              hasChanges = true;
+    const tableData = [];
+    let hasChanges = false;
+
+    // Mostrar pantalla de carga antes de empezar
+    const loadingOverlay = document.createElement('div');
+    loadingOverlay.className = 'loading-overlay';
+    loadingOverlay.innerHTML = `
+        <div class="loading-content">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Procesando...</span>
+            </div>
+            <h2 class="mt-4">Procesando revalidación...</h2>
+            <p>Por favor espere mientras validamos los cambios.</p>
+        </div>
+    `;
+    document.body.appendChild(loadingOverlay);
+    loadingOverlay.style.display = 'flex';
+
+    editableInputs.forEach(input => {
+        const row = input.closest('tr');
+        const campo = row.dataset.field;
+        const original = row.querySelector('.original').textContent.trim();
+        const sugerido = input.value.trim();
+        if (sugerido !== originalValues[campo]) {
+            hasChanges = true;
+        }
+        tableData.push({ campo, original, sugerido });
+    });
+
+    if (!hasChanges) {
+        document.body.removeChild(loadingOverlay);
+        alert("No se detectaron cambios para guardar.");
+        return;
+    }
+
+    // Agregar logs para debugging
+    console.log('Enviando datos:', tableData);
+
+    fetch("/update_data", {
+        method: "POST",
+        headers: { 
+            "Content-Type": "application/json",
+            "Accept": "application/json"
+        },
+        body: JSON.stringify({ table_data: tableData })
+    })
+    .then(res => {
+        console.log('Respuesta recibida:', res.status);
+        return res.json().then(data => {
+            if (!res.ok) {
+                throw new Error(data.message || 'Error en el servidor');
             }
-            tableData.push({ campo, original, sugerido });
-          });
-      
-          if (!hasChanges) {
-            alert("No se detectaron cambios para guardar.");
-            return;
-          }
-      
-          fetch("/update_data", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ table_data: tableData })
-          })
-          .then(res => res.json())
-          .then(json => {
-            if (json.result === "error") {
-              alert("Error al guardar los cambios: " + (json.message || ""));
-              return;
-            }
-      
-            if (json.result === "ok") {
-              alert("Cambios guardados exitosamente (no requerían revalidación).");
-              return;
-            }
-      
-            if (json.result === "revalidated") {
-              const gptData = json.data;
-              const resultado = gptData.Resultado || "";
-      
-              if (resultado.includes("Exitoso")) {
-                fetch('/register', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    ...json.data,
-                    requiresQR: true
-                  })
-                })
-                .then(response => {
-                  if (response.ok) {
-                    window.location.href = "/review_pdf";
-                  } else {
-                    throw new Error("Error en registro");
-                  }
-                })
-                .catch(err => {
-                  alert("Error al registrar: " + err.message);
-                });
-              } else {
-                const mensaje = "No existe código ni nombre en data maestra.\n" + 
-                               "Por favor contacte al administrador.";
-                if (confirm(mensaje + "\n\n¿Desea procesar otra imagen?")) {
-                  window.location.href = "/";
-                }
-              }
-            }
-          })
-          .catch(err => {
-            alert("Error de conexión: " + err);
-          });
+            return data;
         });
+    })
+    .then(data => {
+        console.log('Datos procesados:', data);
+        if (data.status === "success") {
+            // Formatear los datos antes de guardarlos
+            const formattedData = {
+                status: "success",
+                data: {
+                    Result: data.data.Result || data.data.Resultado || '',
+                    Codigo: data.data.Codigo || '',
+                    Nombre: data.data.Nombre || '',
+                    Nota: data.data.Nota || '',
+                    modificaciones: data.data.modificaciones || []
+                }
+            };
+            
+            // Guardar en sessionStorage
+            sessionStorage.setItem('revalidationData', JSON.stringify(formattedData));
+            
+            // Redirigir a la página de resultados
+            window.location.href = '/revalidation_results';
+        } else {
+            throw new Error(data.message || 'Error en la validación');
+        }
+    })
+    .catch(err => {
+        console.error('Error:', err);
+        alert(`Error: ${err.message}`);
+    })
+    .finally(() => {
+        // Asegurarnos de que la pantalla de carga se remueve
+        if (document.body.contains(loadingOverlay)) {
+            document.body.removeChild(loadingOverlay);
+        }
+    });
+});
       
         registerButton.addEventListener('click', () => {
-          if (confirm("¿Estás seguro de registrar este tiquete?")) {
-            fetch('/register', {
-              method: 'POST',
-            })
-            .then(response => {
-              if (response.redirected) {
-                window.location.href = response.url;
-              } else {
-                return response.json();
-              }
-            })
-            .then(data => {
-              if (data && data.result === "ok") {
-                window.location.href = "/review_pdf";
-              } else if (data && data.result === "error") {
-                alert("Error al registrar el tiquete: " + data.message);
-              }
-            })
-            .catch(error => {
-              console.error('Error:', error);
-              alert("Error al registrar el tiquete");
-            });
-          }
+            if (confirm("¿Estás seguro de registrar este tiquete?")) {
+                showLoading();
+                fetch('/register', {
+                    method: 'POST',
+                })
+                .then(response => {
+                    if (response.redirected) {
+                        window.location.href = response.url;
+                    } else {
+                        return response.json();
+                    }
+                })
+                .then(data => {
+                    if (data && data.result === "ok") {
+                        window.location.href = "/review_pdf";
+                    } else if (data && data.result === "error") {
+                        hideLoading();
+                        alert("Error al registrar el tiquete: " + data.message);
+                    }
+                })
+                .catch(error => {
+                    hideLoading();
+                    console.error('Error:', error);
+                    alert("Error al registrar el tiquete");
+                });
+            }
         });
-      </script>
+    </script>
 
-    <!-- Bootstrap JS (opcional) -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>
