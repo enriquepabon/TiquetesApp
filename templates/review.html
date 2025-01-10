@@ -1,0 +1,220 @@
+<!-- templates/review.html -->
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Revisión del Tiquete</title>
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        /* Estilos de ejemplo, ajústalos a tu gusto */
+        .edited-cell { background-color: #ffeeba; }
+        .edited-note { color: red; font-size: 0.9em; margin-left: 10px; }
+        .validation-note { background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin-top: 20px; }
+        .table th { width: 20%; background-color: #f8f9fa; }
+        .table td { width: 40%; }
+        .editable-cell:focus { outline: 2px solid #007bff; padding: 5px; }
+        .modified-field { position: relative; }
+        .modified-field::after {
+            content: '(Modificado)';
+            position: absolute;
+            top: 0;
+            right: 5px;
+            font-size: 0.8em;
+            color: #dc3545;
+        }
+    </style>
+</head>
+<body class="bg-light">
+    <div class="container py-5">
+        <h2 class="mb-4">Revisión del Tiquete</h2>
+        
+        <!-- Imagen -->
+        <div class="mb-4">
+            <img src="{{ url_for('static', filename='uploads/' ~ image_filename) }}?{{ timestamp }}" 
+                 class="img-fluid rounded shadow" alt="Imagen del Tiquete">
+        </div>
+        
+        <!-- Formulario con la tabla de datos -->
+        <form id="review-form">
+            <table class="table table-bordered">
+                <thead>
+                    <tr>
+                        <th>Campo</th>
+                        <th>Información Original</th>
+                        <th>Registro Sugerido</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in parsed_data.table_data %}
+                    <tr data-field="{{ item.campo }}">
+                        <th class="campo">{{ item.campo }}</th>
+                        <td class="original">{{ item.original }}</td>
+                        <td class="sugerido">
+                            <input type="text" class="form-control" 
+                                   value="{{ item.sugerido }}" readonly>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            
+            <!-- Nota de validación (si existe) -->
+            <div class="validation-note">
+                <h5>Nota de Validación:</h5>
+                <p>{{ parsed_data.nota }}</p>
+            </div>
+            
+            <!-- Botones de acción -->
+            <div class="d-flex justify-content-end mt-4">
+                <button type="button" id="edit-button" class="btn btn-primary me-2">Editar</button>
+                <button type="button" id="register-button" class="btn btn-success">Registrar</button>
+                <button type="button" id="save-button" class="btn btn-success d-none">Guardar</button>
+                <button type="button" id="cancel-button" class="btn btn-secondary d-none ms-2">Cancelar</button>
+            </div>
+        </form>
+    </div>
+
+    <script>
+        const editButton = document.getElementById('edit-button');
+        const registerButton = document.getElementById('register-button');
+        const saveButton = document.getElementById('save-button');
+        const cancelButton = document.getElementById('cancel-button');
+        const editableInputs = document.querySelectorAll('.sugerido input');
+      
+        let originalValues = {};
+        editableInputs.forEach(input => {
+          const row = input.closest('tr');
+          originalValues[row.dataset.field] = input.value;
+        });
+      
+        editButton.addEventListener('click', () => {
+          editableInputs.forEach(input => {
+            input.readOnly = false;
+            input.classList.add('table-active');
+          });
+          editButton.classList.add('d-none');
+          registerButton.classList.add('d-none');
+          saveButton.classList.remove('d-none');
+          cancelButton.classList.remove('d-none');
+        });
+      
+        cancelButton.addEventListener('click', () => {
+          editableInputs.forEach(input => {
+            const row = input.closest('tr');
+            input.value = originalValues[row.dataset.field];
+            input.readOnly = true;
+            input.classList.remove('table-active');
+            row.classList.remove('modified-field');
+          });
+          editButton.classList.remove('d-none');
+          registerButton.classList.remove('d-none');
+          saveButton.classList.add('d-none');
+          cancelButton.classList.add('d-none');
+        });
+      
+        saveButton.addEventListener('click', () => {
+          const tableData = [];
+          let hasChanges = false;
+      
+          editableInputs.forEach(input => {
+            const row = input.closest('tr');
+            const campo = row.dataset.field;
+            const original = row.querySelector('.original').textContent.trim();
+            const sugerido = input.value.trim();
+            if (sugerido !== originalValues[campo]) {
+              hasChanges = true;
+            }
+            tableData.push({ campo, original, sugerido });
+          });
+      
+          if (!hasChanges) {
+            alert("No se detectaron cambios para guardar.");
+            return;
+          }
+      
+          fetch("/update_data", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ table_data: tableData })
+          })
+          .then(res => res.json())
+          .then(json => {
+            if (json.result === "error") {
+              alert("Error al guardar los cambios: " + (json.message || ""));
+              return;
+            }
+      
+            if (json.result === "ok") {
+              alert("Cambios guardados exitosamente (no requerían revalidación).");
+              return;
+            }
+      
+            if (json.result === "revalidated") {
+              const gptData = json.data;
+              const resultado = gptData.Resultado || "";
+      
+              if (resultado.includes("Exitoso")) {
+                fetch('/register', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    ...json.data,
+                    requiresQR: true
+                  })
+                })
+                .then(response => {
+                  if (response.ok) {
+                    window.location.href = "/review_pdf";
+                  } else {
+                    throw new Error("Error en registro");
+                  }
+                })
+                .catch(err => {
+                  alert("Error al registrar: " + err.message);
+                });
+              } else {
+                const mensaje = "No existe código ni nombre en data maestra.\n" + 
+                               "Por favor contacte al administrador.";
+                if (confirm(mensaje + "\n\n¿Desea procesar otra imagen?")) {
+                  window.location.href = "/";
+                }
+              }
+            }
+          })
+          .catch(err => {
+            alert("Error de conexión: " + err);
+          });
+        });
+      
+        registerButton.addEventListener('click', () => {
+          if (confirm("¿Estás seguro de registrar este tiquete?")) {
+            fetch('/register', {
+              method: 'POST',
+            })
+            .then(response => {
+              if (response.redirected) {
+                window.location.href = response.url;
+              } else {
+                return response.json();
+              }
+            })
+            .then(data => {
+              if (data && data.result === "ok") {
+                window.location.href = "/review_pdf";
+              } else if (data && data.result === "error") {
+                alert("Error al registrar el tiquete: " + data.message);
+              }
+            })
+            .catch(error => {
+              console.error('Error:', error);
+              alert("Error al registrar el tiquete");
+            });
+          }
+        });
+      </script>
+
+    <!-- Bootstrap JS (opcional) -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

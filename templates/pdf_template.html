@@ -1,0 +1,174 @@
+<!-- templates/pdf_template.html -->
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Reporte de Tiquete</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 40px;
+            color: #333;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .logo {
+            max-width: 300px;
+            margin-bottom: 20px;
+        }
+        .header h1 {
+            font-size: 24px;
+            color: #2c3e50;
+            margin-bottom: 10px;
+        }
+        .image-container {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .image-container img {
+            max-width: 100%;
+            height: auto;
+        }
+        .table-container {
+            margin-bottom: 30px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 20px;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 12px;
+            text-align: left;
+        }
+        th {
+            background-color: #f8f9fa;
+            font-weight: bold;
+            width: 20%;
+        }
+        td {
+            width: 40%;
+        }
+        .modified-field {
+            color: #dc3545;
+        }
+        .footer {
+            margin-top: 30px;
+            font-size: 12px;
+            color: #666;
+            text-align: right;
+            border-top: 1px solid #ddd;
+            padding-top: 20px;
+        }
+        .validation-note {
+            margin-top: 20px;
+            padding: 15px;
+            background-color: #f8f9fa;
+            border-radius: 5px;
+            border: 1px solid #ddd;
+        }
+        .validation-note h3 {
+            margin-top: 0;
+            color: #2c3e50;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <img src="{{ url_for('static', filename='images/logo-oleoflores.png', _external=True) }}" alt="Oleoflores Logo" class="logo">
+        <h2>Registro de Entrada Proveedores</h2>
+        <h3>Extractora Maria la Baja</h3>
+    </div>
+
+    <div class="image-container">
+        <img src="{{ url_for('static', filename='uploads/' ~ image_filename, _external=True) }}" alt="Tiquete">
+    </div>
+
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr>
+                    <th>Campo</th>
+                    <th>Información Original</th>
+                    <th>Registro Final</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in parsed_data.table_data %}
+                <tr>
+                    <th>{{ row.campo }}</th>
+                    <td>{{ row.original }}</td>
+                    <td {% if row.original != row.sugerido %}class="modified-field"{% endif %}>
+                        {{ row.sugerido }}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    {% if parsed_data.nota %}
+    <div class="validation-note">
+        <h3>Nota de Validación:</h3>
+        <p>{{ parsed_data.nota }}</p>
+    </div>
+    {% endif %}
+
+    <div class="footer">
+        <p>Fecha de Procesamiento: {{ fecha_procesamiento }}</p>
+        <p>Hora de Procesamiento: {{ hora_procesamiento }}</p>
+        <p>Fecha de Emisión: {{ fecha_emision }}</p>
+        <p>Hora de Emisión: {{ hora_emision }}</p>
+    </div>
+<!-- Actualización de pdf_template.html -->
+<div class="qr-section">
+    <img src="{{ qr_code_url }}" alt="QR Code" class="qr-code">
+    <p class="qr-text">Escanee para ver detalles</p>
+</div>
+
+<style>
+.qr-section {
+    text-align: center;
+    margin: 20px 0;
+    page-break-inside: avoid;
+}
+.qr-code {
+    width: 150px;
+    height: 150px;
+}
+.qr-text {
+    font-size: 12px;
+    color: #666;
+    margin-top: 5px;
+}
+</style>
+<!-- Agregar antes del </body> -->
+<div class="qr-container">
+    <img src="{{ url_for('static', filename=qr_filename, _external=True) }}" 
+         alt="Código QR" class="qr-image">
+    <p class="qr-text">Escanea para verificar tiquete</p>
+</div>
+
+<style>
+.qr-container {
+    position: fixed;
+    bottom: 100px;
+    right: 40px;
+    text-align: center;
+}
+.qr-image {
+    width: 120px;
+    height: 120px;
+    margin-bottom: 5px;
+}
+.qr-text {
+    font-size: 10px;
+    color: #666;
+    margin: 0;
+}
+</style>
+</body>
+</html>
