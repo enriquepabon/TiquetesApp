@@ -39,7 +39,7 @@
 <body>
     <div class="container py-4">
         <h2 class="text-center mb-4">Guía de Proceso</h2>
-        <h4 class="text-center mb-4">{{ codigo }}</h4>
+        <h4 class="text-center mb-4">0150241A</h4>
 
         <!-- Información General -->
         <div class="card mb-4">
@@ -49,14 +49,14 @@
             <div class="card-body">
                 <div class="row">
                     <div class="col-md-6">
-                        <p><strong>Proveedor:</strong> {{ nombre }}</p>
-                        <p><strong>Código:</strong> {{ codigo }}</p>
-                        <p><strong>Fecha de Emisión:</strong> {{ fecha_registro }}</p>
-                        <p><strong>Placa:</strong> {{ placa }}</p>
+                        <p><strong>Proveedor:</strong> Comercializadora Crear en el Campo sas</p>
+                        <p><strong>Código:</strong> 0150241A</p>
+                        <p><strong>Fecha de Emisión:</strong> </p>
+                        <p><strong>Placa:</strong> LLB663</p>
                     </div>
                     <div class="col-md-6">
-                        <p><strong>Racimos:</strong> {{ cantidad_racimos }}</p>
-                        <p><strong>Transportador:</strong> {{ transportador }}</p>
+                        <p><strong>Racimos:</strong> 130</p>
+                        <p><strong>Transportador:</strong> Luis Gran</p>
                         <p><strong>Estado:</strong> <span class="badge bg-primary">En Proceso</span></p>
                     </div>
                 </div>
@@ -72,20 +72,16 @@
                 <div class="status-bar completed">
                     ✓ Registro en Portería - Completado
                     <div class="process-info">
-                        <span>Fecha: {{ fecha_registro }}</span>
-                        {% if pdf_filename %}
-                        <a href="/static/pdfs/{{ pdf_filename }}" class="btn btn-sm btn-outline-light float-end" download>
-                            Descargar PDF
-                        </a>
-                        {% endif %}
+                        <span>Fecha: </span>
+                        
                     </div>
                 </div>
                 
-                <div class="status-bar {% if estado_actual == 'pesaje' %}current{% else %}pending{% endif %}">
-                    {% if estado_actual == 'pesaje' %}→{% endif %} Pesaje Inicial
+                <div class="status-bar pending">
+                     Pesaje Inicial
                     <div class="process-info">
-                        <button class="btn btn-sm {% if estado_actual == 'pesaje' %}btn-light{% else %}btn-warning{% endif %}" 
-                                onclick="window.location.href='/pesaje/{{ codigo }}'">
+                        <button class="btn btn-sm btn-warning" 
+                                onclick="window.location.href='/pesaje/0150241A'">
                             Iniciar Pesaje
                         </button>
                     </div>
@@ -111,14 +107,11 @@
                 <h5 class="mb-0">Tiquete Original</h5>
             </div>
             <div class="card-body text-center">
-                {% if image_filename %}
-                    <img src="{{ url_for('static', filename='uploads/' + image_filename) }}" 
-                         class="img-fluid" alt="Tiquete original">
-                {% else %}
+                
                     <div class="error-message">
                         Error al cargar la imagen. Por favor, intente subir el tiquete nuevamente.
                     </div>
-                {% endif %}
+                
             </div>
         </div>
     </div>

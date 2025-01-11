@@ -61,6 +61,9 @@ def allowed_file(filename):
 
 @app.route('/', methods=['GET', 'POST'])
 def upload_file():
+    # Limpiar la sesión al acceder a la página principal
+    session.clear()
+    
     if request.method == 'POST':
         file = request.files.get('file')
         if file and allowed_file(file.filename):
@@ -403,6 +406,28 @@ def register():
         logger.info(f"Datos de revalidación completos: {revalidation_data}")
         
         try:
+            # Generar código QR
+            codigo = revalidation_data.get('Código', '')
+            timestamp = int(time.time())
+            qr_filename = f"qr_{codigo}_{timestamp}.png"
+            qr_path = os.path.join(app.static_folder, qr_filename)
+            
+            # Preparar datos para el QR
+            qr_data = {
+                "codigo": codigo,
+                "nombre": revalidation_data.get('Nombre del Agricultor', ''),
+                "fecha": fecha_tiquete,
+                "placa": revalidation_data.get('Placa', ''),
+                "transportador": revalidation_data.get('Transportador', ''),
+                "cantidad_racimos": revalidation_data.get('Cantidad de Racimos', '')
+            }
+            
+            # Generar el QR
+            generate_qr(qr_data, qr_path)
+            session['qr_filename'] = qr_filename
+            
+            logger.info(f"QR generado: {qr_filename}")
+            
             # Generar PDF con todos los datos
             pdf_filename = generate_pdf(
                 parsed_data=parsed_data,
@@ -422,11 +447,12 @@ def register():
             return jsonify({
                 "status": "success",
                 "message": "Registro completado exitosamente",
-                "pdf_filename": pdf_filename
+                "pdf_filename": pdf_filename,
+                "qr_filename": qr_filename
             })
             
         except Exception as pdf_error:
-            logger.error(f"Error generando PDF: {str(pdf_error)}")
+            logger.error(f"Error generando documentos: {str(pdf_error)}")
             logger.error(traceback.format_exc())
             return jsonify({
                 "status": "error",
@@ -441,21 +467,20 @@ def register():
             "message": f"Error al registrar: {str(e)}"
         }), 500
     
-@app.route('/review_pdf', methods=['GET'])
+@app.route('/review_pdf')
 def review_pdf():
     """
-    Muestra una página con el enlace (o vista) del PDF generado.
-    No se descarga automáticamente, sino que se guardó en 'pdfs/'.
+    Muestra una página con el enlace del PDF generado y el código QR.
     """
     pdf_filename = session.get('pdf_filename')
-    if not pdf_filename:
-        return render_template('error.html', message="No se encontró el PDF generado.")
+    qr_filename = session.get('qr_filename')  # Asegúrate de que este valor se está guardando en la sesión
     
-    pdf_path = os.path.join(app.config['PDF_FOLDER'], pdf_filename)
-    if not os.path.exists(pdf_path):
-        return render_template('error.html', message="El PDF no está disponible.")
+    if not pdf_filename or not qr_filename:
+        return render_template('error.html', message="No se encontró el PDF o QR generado.")
     
-    return render_template('review_pdf.html', pdf_filename=pdf_filename)
+    return render_template('review_pdf.html', 
+                         pdf_filename=pdf_filename,
+                         qr_filename=qr_filename)
 
 @app.route('/test_webhook', methods=['GET'])
 def test_webhook():
@@ -546,19 +571,20 @@ def actualizar_estado(codigo):
 @app.route('/pesaje/<codigo>', methods=['GET', 'POST'])
 def pesaje(codigo):
     try:
-        # Obtener datos actuales de la guía
-        datos_guia = obtener_datos_guia(codigo)  # Necesitarás implementar esta función
+        datos_guia = obtener_datos_guia(codigo)
         
         if request.method == 'POST':
             peso_bruto = request.form.get('peso_bruto')
             tipo_pesaje = request.form.get('tipo_pesaje')
-            # Guardar datos de pesaje
-            actualizar_estado_guia(codigo, {
-                'peso_bruto': peso_bruto,
-                'tipo_pesaje': tipo_pesaje,
-                'hora_pesaje': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                'estado_actual': 'clasificacion'
-            })
+            
+            # Guardar datos de pesaje con fecha y hora
+            now = datetime.now()
+            session['peso_bruto'] = peso_bruto
+            session['tipo_pesaje'] = tipo_pesaje
+            session['fecha_pesaje'] = now.strftime("%Y-%m-%d")
+            session['hora_pesaje'] = now.strftime("%H:%M:%S")
+            session['estado_actual'] = 'clasificacion'
+            
             return redirect(url_for('ver_guia', codigo=codigo))
             
         return render_template(
@@ -577,30 +603,57 @@ def obtener_datos_guia(codigo):
     Obtiene los datos actuales de la guía usando los datos más recientes
     """
     try:
+        # Obtener datos de la sesión
         parsed_data = session.get('parsed_data', {})
         revalidation_data = session.get('revalidation_data', {})
+        image_filename = session.get('image_filename')
+
+        # Verificar la existencia de la imagen
+        if image_filename:
+            image_path = os.path.join(app.config['UPLOAD_FOLDER'], image_filename)
+            if not os.path.exists(image_path):
+                image_filename = None
+                logger.error(f"Imagen no encontrada en: {image_path}")
+
+        # Fecha y hora actual
+        now = datetime.now()
+        
+        # Datos básicos
+        datos = {
+            'codigo': codigo,
+            'nombre': '',
+            'fecha_registro': now.strftime("%d/%m/%Y"),
+            'hora_registro': now.strftime("%H:%M:%S"),
+            'placa': '',
+            'transportador': '',
+            'cantidad_racimos': '',
+            'estado_actual': session.get('estado_actual', 'pesaje'),
+            'image_filename': image_filename,
+            'pdf_filename': session.get('pdf_filename', ''),
+        }
         
         # Extraer datos del parsed_data
-        table_data = parsed_data.get('table_data', [])
-        datos = {}
-        for row in table_data:
-            campo = row['campo']
-            # Usar valor sugerido a menos que sea 'No disponible'
-            valor = row['original'] if row['sugerido'] == 'No disponible' else row['sugerido']
-            
-            # Mapear campos a datos
-            if campo == 'Fecha':
-                datos['fecha'] = valor
-            elif campo == 'Nombre del Agricultor':
-                datos['nombre'] = valor
-            elif campo == 'Código':
-                datos['codigo'] = valor
-            elif campo == 'Placa':
-                datos['placa'] = valor
-            elif campo == 'Cantidad de Racimos':
-                datos['cantidad_racimos'] = valor
-            elif campo == 'Transportador':
-                datos['transportador'] = valor
+        if parsed_data and 'table_data' in parsed_data:
+            for row in parsed_data['table_data']:
+                campo = row['campo']
+                valor = row['original'] if row['sugerido'] == 'No disponible' else row['sugerido']
+                
+                if campo == 'Fecha':
+                    try:
+                        fecha_obj = datetime.strptime(valor, "%Y-%m-%d")
+                        datos['fecha_registro'] = fecha_obj.strftime("%d/%m/%Y")
+                    except:
+                        datos['fecha_registro'] = valor
+                elif campo == 'Nombre del Agricultor':
+                    datos['nombre'] = valor
+                elif campo == 'Código':
+                    datos['codigo'] = valor
+                elif campo == 'Placa':
+                    datos['placa'] = valor
+                elif campo == 'Cantidad de Racimos':
+                    datos['cantidad_racimos'] = valor
+                elif campo == 'Transportador':
+                    datos['transportador'] = valor
         
         # Sobrescribir con datos de revalidación si existen
         if revalidation_data:
@@ -608,25 +661,13 @@ def obtener_datos_guia(codigo):
                 datos['nombre'] = revalidation_data['Nombre del Agricultor']
             if 'Código' in revalidation_data:
                 datos['codigo'] = revalidation_data['Código']
-
-        # Construir estructura final
-        datos_guia = {
-            'codigo': datos.get('codigo', codigo),
-            'nombre': datos.get('nombre', ''),
-            'fecha_registro': datos.get('fecha', datetime.now().strftime("%d-%m-%Y")),
-            'placa': datos.get('placa', ''),
-            'transportador': datos.get('transportador', ''),
-            'cantidad_racimos': datos.get('cantidad_racimos', ''),
-            'estado_actual': session.get('estado_actual', 'pesaje'),
-            'image_filename': session.get('image_filename', ''),
-            'pdf_filename': session.get('pdf_filename', ''),
-        }
         
-        logger.info(f"Datos obtenidos para guía {codigo}: {datos_guia}")
-        return datos_guia
+        logger.info(f"Datos obtenidos para guía {codigo}: {datos}")
+        return datos
         
     except Exception as e:
         logger.error(f"Error obteniendo datos de guía: {str(e)}")
+        logger.error(traceback.format_exc())
         return {}
 
 def actualizar_estado_guia(codigo, datos):
@@ -655,6 +696,18 @@ def ver_guia(codigo):
         datos_guia = obtener_datos_guia(codigo)
         if not datos_guia:
             return render_template('error.html', message="Guía no encontrada"), 404
+
+        # Generar código de guía con formato: codigo_fecha_hora
+        now = datetime.now()
+        fecha_hora = now.strftime("%Y%m%d_%H%M%S")
+        codigo_guia = f"{codigo}_{fecha_hora}"
+        
+        # Actualizar datos_guia con el nuevo código
+        datos_guia.update({
+            'codigo_guia': codigo_guia,
+            'fecha_formato': now.strftime("%d/%m/%Y"),  # Formato más legible para la fecha
+            'hora_formato': now.strftime("%H:%M:%S")    # Formato para la hora
+        })
             
         return render_template('guia_template.html', **datos_guia)
         
