@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, session, jsonify
+from flask import Flask, render_template, request, redirect, url_for, session, jsonify, send_from_directory, current_app
 import os
 import requests
 from werkzeug.utils import secure_filename
@@ -10,56 +10,49 @@ import traceback
 import mimetypes
 import time
 import json
-from utils import generate_pdf
-from utils import generate_qr, get_drive_service, upload_to_drive
-from config import app
-from utils import generate_pdf, generate_qr
-
-
-# Agregar/modificar la ruta register con el código que proporcioné
-
-# >>> NUEVO: librerías para QR y Excel (opcionales si necesitas)
-try:
-    import magic
-    HAVE_MAGIC = True
-except ImportError:
-    HAVE_MAGIC = False
-
-from parser import parse_markdown_response
-
-# >>> NUEVO:
 import qrcode
 from io import BytesIO
 from PIL import Image
 from openpyxl import Workbook, load_workbook
 from openpyxl.drawing.image import Image as ExcelImage
-
-app = Flask(__name__)
+from utils import generate_pdf, generate_qr, get_drive_service, upload_to_drive
+from parser import parse_markdown_response
+from config import app
 
 # Configuración de Logging
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
-# Clave secreta para usar sesiones (cámbiala por una clave segura en producción)
-app.secret_key = 'tu_clave_secreta_aquí'
+# Configuración de carpetas
+app.config.update(
+    GUIAS_FOLDER=os.path.join(app.static_folder, 'guias'),
+    UPLOAD_FOLDER=os.path.join(app.static_folder, 'uploads'),
+    PDF_FOLDER=os.path.join(app.static_folder, 'pdfs'),
+    EXCEL_FOLDER=os.path.join(app.static_folder, 'excels'),
+    SECRET_KEY='tu_clave_secreta_aquí'
+)
 
-# Directorio para guardar las imágenes y PDFs dentro de static
-UPLOAD_FOLDER = os.path.join(app.static_folder, 'uploads')
-PDF_FOLDER = os.path.join(app.static_folder, 'pdfs')
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-os.makedirs(PDF_FOLDER, exist_ok=True)
-app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-app.config['PDF_FOLDER'] = PDF_FOLDER
+# Crear directorios necesarios
+for folder in ['GUIAS_FOLDER', 'UPLOAD_FOLDER', 'PDF_FOLDER', 'EXCEL_FOLDER']:
+    os.makedirs(app.config[folder], exist_ok=True)
 
-# >>> NUEVO: carpeta para Excel (si quieres guardar un archivo local)
-EXCEL_FOLDER = os.path.join(app.static_folder, 'excels')
-os.makedirs(EXCEL_FOLDER, exist_ok=True)
+@app.route('/guias/<filename>')
+def serve_guia(filename):
+    try:
+        app.logger.info(f"Intentando servir archivo: {filename}")
+        app.logger.info(f"Directorio de guías: {app.config['GUIAS_FOLDER']}")
+        app.logger.info(f"¿Archivo existe? {os.path.exists(os.path.join(app.config['GUIAS_FOLDER'], filename))}")
+        
+        return send_from_directory(app.config['GUIAS_FOLDER'], filename)
+    except Exception as e:
+        app.logger.error(f"Error sirviendo archivo: {str(e)}")
+        return render_template('error.html', message="Archivo no encontrado"), 404
 
 # URLs de los Webhooks en Make.com
 PROCESS_WEBHOOK_URL = "https://hook.us2.make.com/asrfb3kv3cw4o4nd43wylyasfx5yq55f"
 REGISTER_WEBHOOK_URL = "https://hook.us2.make.com/f63o7rmsuixytjfqxq3gjljnscqhiedl"
-# URL del nuevo webhook para revalidación
 REVALIDATION_WEBHOOK_URL = "https://hook.us2.make.com/bok045bvtwpj89ig58nhrmx1x09yh56u"
+
 # Extensiones permitidas para subir
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'bmp', 'tiff'}
 
@@ -166,11 +159,28 @@ def update_data():
     try:
         logger.info("Iniciando proceso de update_data")
         updated_data = request.get_json()
-        logger.info(f"Datos recibidos: {updated_data}")
+        logger.info(f"Datos recibidos en update_data: {updated_data}")
         
+        # Actualizar los datos en la sesión
+        parsed_data = session.get('parsed_data', {})
         table_data = updated_data.get('table_data', [])
-        modifications = []
         
+        # Actualizar todos los campos en parsed_data
+        for row in table_data:
+            campo = row.get('campo')
+            valor_modificado = row.get('sugerido', '').strip()
+            
+            # Buscar y actualizar en parsed_data
+            for original_row in parsed_data.get('table_data', []):
+                if original_row['campo'] == campo:
+                    original_row['sugerido'] = valor_modificado
+        
+        # Guardar parsed_data actualizado en sesión
+        session['parsed_data'] = parsed_data
+        logger.info(f"Datos actualizados en sesión: {parsed_data}")
+
+        # Si hay campos críticos modificados (nombre o código), revalidar
+        modifications = []
         for row in table_data:
             if row.get('campo') in ['Nombre del Agricultor', 'Código']:
                 valor_anterior = str(row.get('original', '')).strip()
@@ -196,36 +206,40 @@ def update_data():
                 
                 if response.status_code == 200:
                     try:
-                        # Intentar parsear la respuesta como JSON
                         webhook_data = response.json()
+                        return jsonify({
+                            "status": "success",
+                            "data": {
+                                "Result": webhook_data.get('Body', {}).get('Resultado', ''),
+                                "Codigo": webhook_data.get('Body', {}).get('Codigo', ''),
+                                "Nombre": webhook_data.get('Body', {}).get('Nombre', ''),
+                                "Nota": webhook_data.get('Body', {}).get('Nota', ''),
+                                "modificaciones": modifications,
+                                "webhook_status": response.status_code
+                            }
+                        })
                     except ValueError:
-                        # Si no es JSON válido, intentar parsear el texto estructurado
                         webhook_text = response.text
                         if isinstance(webhook_text, str):
-                            # Parsear la respuesta estructurada
-                            lines = webhook_text.split('\n')
                             webhook_data = {
                                 'Body': {
-                                    'Resultado': next((l.replace('Resultado:', '').strip() for l in lines if 'Resultado:' in l), ''),
-                                    'Codigo': next((l.replace('Codigo:', '').strip().strip('"') for l in lines if 'Codigo:' in l), ''),
-                                    'Nombre': next((l.replace('Nombre:', '').strip().strip('"') for l in lines if 'Nombre:' in l), ''),
-                                    'Nota': next((l.replace('Nota:', '').strip() for l in lines if 'Nota:' in l), '')
-                                },
-                                'Status': response.status_code
+                                    'Resultado': next((l.replace('Resultado:', '').strip() for l in webhook_text.split('\n') if 'Resultado:' in l), ''),
+                                    'Codigo': next((l.replace('Codigo:', '').strip().strip('"') for l in webhook_text.split('\n') if 'Codigo:' in l), ''),
+                                    'Nombre': next((l.replace('Nombre:', '').strip().strip('"') for l in webhook_text.split('\n') if 'Nombre:' in l), ''),
+                                    'Nota': next((l.replace('Nota:', '').strip() for l in webhook_text.split('\n') if 'Nota:' in l), '')
+                                }
                             }
-
-                    # Estructurar la respuesta final
-                    return jsonify({
-                        "status": "success",
-                        "data": {
-                            "Result": webhook_data.get('Body', {}).get('Resultado', ''),
-                            "Codigo": webhook_data.get('Body', {}).get('Codigo', ''),
-                            "Nombre": webhook_data.get('Body', {}).get('Nombre', ''),
-                            "Nota": webhook_data.get('Body', {}).get('Nota', ''),
-                            "modificaciones": modifications,
-                            "webhook_status": response.status_code
-                        }
-                    })
+                            return jsonify({
+                                "status": "success",
+                                "data": {
+                                    "Result": webhook_data['Body']['Resultado'],
+                                    "Codigo": webhook_data['Body']['Codigo'],
+                                    "Nombre": webhook_data['Body']['Nombre'],
+                                    "Nota": webhook_data['Body']['Nota'],
+                                    "modificaciones": modifications,
+                                    "webhook_status": response.status_code
+                                }
+                            })
                 else:
                     raise Exception(f"Error en webhook: {response.text}")
                     
@@ -235,13 +249,7 @@ def update_data():
                     "status": "error",
                     "message": f"Error de conexión: {str(e)}"
                 }), 500
-            except Exception as e:
-                logger.error(f"Error procesando respuesta: {str(e)}")
-                return jsonify({
-                    "status": "error",
-                    "message": str(e)
-                }), 500
-        
+                
         return jsonify({
             "status": "success",
             "message": "No se requieren cambios para revalidación"
@@ -288,36 +296,46 @@ def generate_pdf(parsed_data, image_filename, fecha_procesamiento, hora_procesam
         logger.info("Iniciando generación de PDF")
         logger.info(f"Datos de revalidación: {revalidation_data}")
         
-        now = datetime.now()
-        fecha_emision = now.strftime("%Y-%m-%d")
-        hora_emision = now.strftime("%H:%M:%S")
+        # Obtener fecha original del tiquete
+        fecha_registro = None
+        for row in parsed_data.get('table_data', []):
+            if row['campo'] == 'Fecha':
+                fecha_registro = row['original'] if row['sugerido'] == 'No disponible' else row['sugerido']
+                break
         
-        # Generar QR con los datos validados
+        if not fecha_registro:
+            fecha_registro = datetime.now().strftime("%d-%m-%Y")
+        
+        # Preparar datos para el QR
         qr_data = {
             "codigo": revalidation_data.get('Código') if revalidation_data else parsed_data.get('codigo', ''),
             "nombre": revalidation_data.get('Nombre del Agricultor') if revalidation_data else parsed_data.get('nombre_agricultor', ''),
-            "fecha": fecha_procesamiento
+            "fecha": fecha_registro,
+            "placa": next((row['sugerido'] for row in parsed_data.get('table_data', []) if row['campo'] == 'Placa'), ''),
+            "transportador": next((row['sugerido'] for row in parsed_data.get('table_data', []) if row['campo'] == 'Transportador'), ''),
+            "cantidad_racimos": next((row['sugerido'] for row in parsed_data.get('table_data', []) if row['campo'] == 'Cantidad de Racimos'), '')
         }
         
         qr_filename = f"qr_{qr_data['codigo']}_{int(time.time())}.png"
         qr_path = os.path.join(app.static_folder, qr_filename)
-        generate_qr(str(qr_data), qr_path)
+        generate_qr(qr_data, qr_path)
         
-        # Renderizar la plantilla HTML
+        # Renderizar plantilla
         rendered = render_template(
             'pdf_template.html',
             parsed_data=parsed_data,
             revalidation_data=revalidation_data,
             image_filename=image_filename,
-            fecha_procesamiento=fecha_procesamiento,
+            fecha_registro=fecha_registro,
+            fecha_procesamiento=fecha_registro,  # Usar la fecha del tiquete
             hora_procesamiento=hora_procesamiento,
-            fecha_emision=fecha_emision,
-            hora_emision=hora_emision,
+            fecha_emision=datetime.now().strftime("%d-%m-%Y"),
+            hora_emision=datetime.now().strftime("%H:%M:%S"),
             qr_filename=qr_filename
         )
         
-        # Generar el PDF
-        pdf_filename = f'tiquete_{qr_data["codigo"]}_{fecha_procesamiento}.pdf'
+        # Generar PDF
+        pdf_filename = f'tiquete_{qr_data["codigo"]}_{fecha_registro}.pdf'
         pdf_path = os.path.join(app.config['PDF_FOLDER'], pdf_filename)
         
         HTML(
@@ -326,7 +344,6 @@ def generate_pdf(parsed_data, image_filename, fecha_procesamiento, hora_procesam
         ).write_pdf(pdf_path)
         
         logger.info(f"PDF generado exitosamente: {pdf_filename}")
-        
         return pdf_filename
         
     except Exception as e:
@@ -339,7 +356,7 @@ def register():
     try:
         logger.info("Iniciando proceso de registro")
         data = request.get_json()
-        logger.info(f"Datos recibidos: {data}")
+        logger.info(f"Datos recibidos en register: {data}")
         
         parsed_data = session.get('parsed_data', {})
         image_filename = session.get('image_filename', '')
@@ -354,21 +371,39 @@ def register():
                 "message": "No hay datos para registrar."
             }), 400
 
-        now = datetime.now()
-        fecha_procesamiento = now.strftime("%Y-%m-%d")
-        hora_procesamiento = now.strftime("%H:%M:%S")
+        # Obtener fecha del tiquete original
+        fecha_tiquete = None
+        for row in parsed_data.get('table_data', []):
+            if row['campo'] == 'Fecha':
+                fecha_tiquete = row['sugerido'] if row['sugerido'] != 'No disponible' else row['original']
+                break
         
-        # Preparar datos de revalidación
-        revalidation_data = {
-            'Nombre del Agricultor': data.get('Nombre', ''),
-            'Código': data.get('Codigo', ''),
-            'nota': data.get('Nota', '')
-        }
+        # Si no hay fecha en el tiquete, usar la fecha actual
+        if not fecha_tiquete or fecha_tiquete == 'No disponible':
+            fecha_tiquete = datetime.now().strftime("%Y-%m-%d")
         
-        logger.info(f"Datos de revalidación preparados: {revalidation_data}")
+        fecha_procesamiento = fecha_tiquete
+        hora_procesamiento = datetime.now().strftime("%H:%M:%S")
+        
+        # Extraer todos los datos actualizados
+        revalidation_data = {}
+        for row in parsed_data.get('table_data', []):
+            campo = row['campo']
+            valor = row['sugerido'] if row['sugerido'] != 'No disponible' else row['original']
+            revalidation_data[campo] = valor
+
+        # Agregar datos de revalidación recibidos
+        if data.get('Nombre'):
+            revalidation_data['Nombre del Agricultor'] = data['Nombre']
+        if data.get('Codigo'):
+            revalidation_data['Código'] = data['Codigo']
+        if data.get('Nota'):
+            revalidation_data['nota'] = data['Nota']
+        
+        logger.info(f"Datos de revalidación completos: {revalidation_data}")
         
         try:
-            # Generar PDF
+            # Generar PDF con todos los datos
             pdf_filename = generate_pdf(
                 parsed_data=parsed_data,
                 image_filename=image_filename,
@@ -377,10 +412,12 @@ def register():
                 revalidation_data=revalidation_data
             )
             
-            logger.info(f"PDF generado exitosamente: {pdf_filename}")
-            
-            # Guardar el nombre del PDF en la sesión
+            # Guardar todos los datos actualizados en la sesión
             session['pdf_filename'] = pdf_filename
+            session['revalidation_data'] = revalidation_data
+            session['estado_actual'] = 'pesaje'
+            
+            logger.info(f"PDF generado y datos guardados: {pdf_filename}")
             
             return jsonify({
                 "status": "success",
@@ -476,5 +513,154 @@ def revalidation_results():
     """
     return render_template('revalidation_results.html')
 
+@app.route('/pesaje-inicial/<codigo>', methods=['GET', 'POST'])
+def pesaje_inicial(codigo):
+    """Manejo de pesaje inicial (directo o virtual)"""
+    pass
+
+@app.route('/clasificacion/<codigo>', methods=['GET', 'POST'])
+def clasificacion(codigo):
+    """Manejo de clasificación de fruta (automático o manual)"""
+    pass
+
+@app.route('/pesaje-tara/<codigo>', methods=['GET', 'POST'])
+def pesaje_tara(codigo):
+    """Manejo de pesaje tara y generación de documentos"""
+    pass
+
+@app.route('/salida/<codigo>', methods=['GET', 'POST'])
+def salida(codigo):
+    """Manejo de proceso de salida y cierre de guía"""
+    pass
+
+@app.route('/seguimiento-guia/<codigo>')
+def seguimiento_guia(codigo):
+    """Vista de seguimiento completo del proceso"""
+    pass
+
+@app.route('/actualizar-estado/<codigo>', methods=['POST'])
+def actualizar_estado(codigo):
+    """API para actualizar el estado de cualquier etapa del proceso"""
+    pass
+
+@app.route('/pesaje/<codigo>', methods=['GET', 'POST'])
+def pesaje(codigo):
+    try:
+        # Obtener datos actuales de la guía
+        datos_guia = obtener_datos_guia(codigo)  # Necesitarás implementar esta función
+        
+        if request.method == 'POST':
+            peso_bruto = request.form.get('peso_bruto')
+            tipo_pesaje = request.form.get('tipo_pesaje')
+            # Guardar datos de pesaje
+            actualizar_estado_guia(codigo, {
+                'peso_bruto': peso_bruto,
+                'tipo_pesaje': tipo_pesaje,
+                'hora_pesaje': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                'estado_actual': 'clasificacion'
+            })
+            return redirect(url_for('ver_guia', codigo=codigo))
+            
+        return render_template(
+            'pesaje.html',
+            codigo=codigo,
+            datos=datos_guia
+        )
+    except Exception as e:
+        app.logger.error(f"Error en pesaje: {str(e)}")
+        return render_template('error.html', message="Error procesando pesaje"), 500
+    
+    # En apptiquetes.py, agrega estas funciones
+
+def obtener_datos_guia(codigo):
+    """
+    Obtiene los datos actuales de la guía usando los datos más recientes
+    """
+    try:
+        parsed_data = session.get('parsed_data', {})
+        revalidation_data = session.get('revalidation_data', {})
+        
+        # Extraer datos del parsed_data
+        table_data = parsed_data.get('table_data', [])
+        datos = {}
+        for row in table_data:
+            campo = row['campo']
+            # Usar valor sugerido a menos que sea 'No disponible'
+            valor = row['original'] if row['sugerido'] == 'No disponible' else row['sugerido']
+            
+            # Mapear campos a datos
+            if campo == 'Fecha':
+                datos['fecha'] = valor
+            elif campo == 'Nombre del Agricultor':
+                datos['nombre'] = valor
+            elif campo == 'Código':
+                datos['codigo'] = valor
+            elif campo == 'Placa':
+                datos['placa'] = valor
+            elif campo == 'Cantidad de Racimos':
+                datos['cantidad_racimos'] = valor
+            elif campo == 'Transportador':
+                datos['transportador'] = valor
+        
+        # Sobrescribir con datos de revalidación si existen
+        if revalidation_data:
+            if 'Nombre del Agricultor' in revalidation_data:
+                datos['nombre'] = revalidation_data['Nombre del Agricultor']
+            if 'Código' in revalidation_data:
+                datos['codigo'] = revalidation_data['Código']
+
+        # Construir estructura final
+        datos_guia = {
+            'codigo': datos.get('codigo', codigo),
+            'nombre': datos.get('nombre', ''),
+            'fecha_registro': datos.get('fecha', datetime.now().strftime("%d-%m-%Y")),
+            'placa': datos.get('placa', ''),
+            'transportador': datos.get('transportador', ''),
+            'cantidad_racimos': datos.get('cantidad_racimos', ''),
+            'estado_actual': session.get('estado_actual', 'pesaje'),
+            'image_filename': session.get('image_filename', ''),
+            'pdf_filename': session.get('pdf_filename', ''),
+        }
+        
+        logger.info(f"Datos obtenidos para guía {codigo}: {datos_guia}")
+        return datos_guia
+        
+    except Exception as e:
+        logger.error(f"Error obteniendo datos de guía: {str(e)}")
+        return {}
+
+def actualizar_estado_guia(codigo, datos):
+    """
+    Actualiza el estado y datos de la guía
+    Por ahora guardamos en sesión, luego será en base de datos
+    """
+    try:
+        # Actualizar datos en la sesión
+        for key, value in datos.items():
+            session[key] = value
+            
+        logger.info(f"Estado actualizado para guía {codigo}: {datos}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error actualizando estado de guía: {str(e)}")
+        return False
+    
+@app.route('/ver_guia/<codigo>')
+def ver_guia(codigo):
+    """
+    Muestra la vista actual de la guía
+    """
+    try:
+        datos_guia = obtener_datos_guia(codigo)
+        if not datos_guia:
+            return render_template('error.html', message="Guía no encontrada"), 404
+            
+        return render_template('guia_template.html', **datos_guia)
+        
+    except Exception as e:
+        logger.error(f"Error mostrando guía: {str(e)}")
+        return render_template('error.html', message="Error mostrando guía"), 500
+
 if __name__ == '__main__':
-    app.run(debug=True, port=5002)
+    app.run(debug=True, host='0.0.0.0', port=5002)

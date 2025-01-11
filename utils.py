@@ -8,101 +8,68 @@ import logging
 from weasyprint import HTML
 from flask import render_template
 from config import app
+from flask import render_template, current_app
 
 logger = logging.getLogger(__name__)
 
 def generate_qr(data, filename):
-    """
-    Genera un código QR con la información completa del proceso de registro.
-    Incluye el estado actual y espacios para futuros estados del proceso.
-    """
     try:
         logger.info("Iniciando generación de QR")
-        logger.info(f"Datos recibidos: {data}")
         
-        # Obtener fecha y hora actual
-        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        # Generar nombre y ruta del archivo HTML
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        html_filename = f"guia_{data['codigo']}_{timestamp}.html"
+        html_path = os.path.join(current_app.config['GUIAS_FOLDER'], html_filename)
         
-        # Estructurar los datos del proceso completo
-        process_data = {
-            "id_tiquete": data.get("codigo", ""),
-            "fecha_registro": current_time,
-            "datos_registro": {
-                "agricultor": data.get("nombre", ""),
-                "codigo": data.get("codigo", ""),
-                "placa": data.get("placa", ""),
-                "cantidad_racimos": data.get("cantidad_racimos", ""),
-                "transportador": data.get("transportador", ""),
-                "nota_validacion": data.get("nota", "")
-            },
-            "estados_proceso": {
-                "registro": {
-                    "estado": "completado",
-                    "fecha": current_time,
-                    "usuario": "sistema"
-                },
-                "peso_bruto": {
-                    "estado": "pendiente",
-                    "fecha": None,
-                    "peso": None,
-                    "usuario": None
-                },
-                "clasificacion": {
-                    "estado": "pendiente",
-                    "fecha": None,
-                    "calidad": None,
-                    "usuario": None
-                },
-                "cierre": {
-                    "estado": "pendiente",
-                    "fecha": None,
-                    "peso_neto": None,
-                    "usuario": None
-                }
-            },
-            "modificaciones": [],
-            "url_seguimiento": f"/seguimiento-tiquete/{data.get('codigo', '')}"
-        }
+        logger.info(f"Generando archivo HTML en: {html_path}")
         
-        # Si hubo revalidación, agregar la información
-        if data.get("revalidation_data"):
-            process_data["modificaciones"].append({
-                "fecha": current_time,
-                "tipo": "revalidacion",
-                "cambios": {
-                    "nombre_anterior": data.get("nombre_original", ""),
-                    "nombre_nuevo": data.get("nombre", ""),
-                    "codigo_anterior": data.get("codigo_original", ""),
-                    "codigo_nuevo": data.get("codigo", "")
-                }
-            })
-
-        logger.info(f"Datos estructurados para QR: {process_data}")
+        # Obtener los datos del tiquete
+        html_content = render_template(
+            'guia_template.html',
+            codigo=data['codigo'],
+            nombre=data.get('nombre', ''),
+            fecha=data.get('fecha', ''),
+            placa=data.get('placa', ''),
+            cantidad_racimos=data.get('cantidad_racimos', ''),
+            transportador=data.get('transportador', ''),
+            image_filename=data.get('image_filename', '')
+        )
         
-        # Generar el QR
+        # Guardar el archivo HTML
+        logger.info("Guardando archivo HTML...")
+        with open(html_path, 'w', encoding='utf-8') as f:
+            f.write(html_content)
+            
+        logger.info(f"Archivo HTML guardado: {os.path.exists(html_path)}")
+        
+        # Generar URL para el QR
+        base_url = "http://localhost:5002"
+        url = f"{base_url}/guias/{html_filename}"
+        
+        logger.info(f"URL generada: {url}")
+        
+        # Generar QR
         qr = qrcode.QRCode(
-            version=None,  # Automático
-            error_correction=qrcode.constants.ERROR_CORRECT_H,  # Alta corrección de errores
+            version=1,
+            error_correction=qrcode.constants.ERROR_CORRECT_H,
             box_size=10,
             border=4,
         )
-        
-        # Convertir a JSON y agregar al QR
-        qr_data = json.dumps(process_data, ensure_ascii=False)
-        qr.add_data(qr_data)
+        qr.add_data(url)
         qr.make(fit=True)
         
-        # Crear la imagen
+        # Guardar QR
         qr_image = qr.make_image(fill_color="black", back_color="white")
         qr_image.save(filename)
         
-        logger.info(f"QR generado exitosamente: {filename}")
+        logger.info("QR generado exitosamente")
         return filename
         
     except Exception as e:
-        logger.error(f"Error generando QR: {str(e)}")
+        logger.error(f"Error en generación: {str(e)}")
         logger.error(traceback.format_exc())
-        raise Exception(f"Error en generación de QR: {str(e)}")
+        raise
+
 
 def generate_pdf(parsed_data, image_filename, fecha_procesamiento, hora_procesamiento, revalidation_data=None):
     """

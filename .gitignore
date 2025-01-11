@@ -25,3 +25,8 @@ static/pdfs/*
 # IDEs
 .vscode/
 .idea/
+# Añade estos patrones a .gitignore
+__pycache__/
+*.pyc
+static/pdfs/*.pdf
+static/qr_*.png
