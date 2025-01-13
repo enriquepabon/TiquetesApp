@@ -57,8 +57,8 @@
    <!-- Encabezado principal -->
 <div class="container py-4">
     <h2 class="text-center mb-2">Guía de Proceso</h2>
-    <h4 class="text-center mb-2">{{ codigo_guia }}</h4>
-    <h4 class="text-center mb-2">{{ nombre }}</h4>
+    <h4 class="text-center mb-2">0105007A_20250113_095027</h4>
+    <h4 class="text-center mb-2">Flores Perez Ricael</h4>
 
         <!-- Información General -->
         <div class="card info-card mb-4">
@@ -69,27 +69,23 @@
                 <div class="row">
                     <div class="col-md-6">
                         <p><strong>Fecha del Tiquete:</strong> 
-                            {% if fecha_tiquete %}
-                                {% if '-' in fecha_tiquete %}
-                                    {{ fecha_tiquete.replace('-', '/') }}
-                                {% else %}
-                                    {{ fecha_tiquete }}
-                                {% endif %}
-                            {% else %}
-                                No disponible
-                            {% endif %}
+                            
+                                
+                                    13/01/2025
+                                
+                            
                         </p>
-                        <p><strong>Fecha de Registro:</strong> {{ fecha_formato }}</p>
-                        <p><strong>Hora de Registro:</strong> {{ hora_formato }}</p>
-                        <p><strong>Código:</strong> {{ codigo if codigo else 'No disponible' }}</p>
-                        <p><strong>Placa:</strong> {{ placa if placa else 'No disponible' }}</p>
+                        <p><strong>Fecha de Registro:</strong> 13/01/2025</p>
+                        <p><strong>Hora de Registro:</strong> 09:50:27</p>
+                        <p><strong>Código:</strong> 0105007A</p>
+                        <p><strong>Placa:</strong> SDF810</p>
                     </div>
                     <div class="col-md-6">
-                        <p><strong>Racimos:</strong> {{ cantidad_racimos if cantidad_racimos else 'No disponible' }}</p>
-                        <p><strong>Transportador:</strong> {{ transportador if transportador else 'No disponible' }}</p>
+                        <p><strong>Racimos:</strong> 327</p>
+                        <p><strong>Transportador:</strong> Héctor Flores</p>
                         <p><strong>Estado:</strong> 
-                            <span class="badge {% if estado_actual == 'pesaje' %}bg-warning{% else %}bg-primary{% endif %}">
-                                {{ 'Pendiente Pesaje' if estado_actual == 'pesaje' else 'En Proceso' }}
+                            <span class="badge bg-warning">
+                                Pendiente Pesaje
                             </span>
                         </p>
                     </div>
@@ -108,26 +104,20 @@
             <div class="process-info">
                 <div class="d-flex justify-content-between align-items-center">
                     <span>
-                        Fecha: {{ fecha_registro }} Hora: {{ hora_formato }}
+                        Fecha: 13/01/2025 Hora: 09:50:27
                     </span>
-                    {% if pdf_filename %}
-                        <a href="/static/pdfs/{{ pdf_filename }}" 
-                           class="btn btn-light btn-sm" 
-                           download>
-                            Descargar PDF
-                        </a>
-                    {% endif %}
+                    
                 </div>
                 <div class="mt-2">
-                    <small class="text-white-50">Código de guía: {{ codigo_guia }}</small>
+                    <small class="text-white-50">Código de guía: 0105007A_20250113_095027</small>
                 </div>
             </div>
         </div>
         
-        <div class="status-bar {% if estado_actual == 'pesaje' %}current{% else %}pending{% endif %}">
-            {% if estado_actual == 'pesaje' %}→{% endif %} Pesaje Inicial
+        <div class="status-bar current">
+            → Pesaje Inicial
             <div class="process-info">
-                <button class="btn btn-process" onclick="window.location.href='/pesaje/{{ codigo }}'">
+                <button class="btn btn-process" onclick="window.location.href='/pesaje/0105007A'">
                     Iniciar Pesaje
                 </button>
             </div>

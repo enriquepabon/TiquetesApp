@@ -126,11 +126,15 @@
     </style>
 </head>
 <body>
-    <div class="header">
-        <img src="{{ url_for('static', filename='images/logo-oleoflores.png', _external=True) }}" alt="Oleoflores Logo" class="logo">
-        <h1 class="title">Registro de Entrada Proveedores</h1>
-        <h2 class="subtitle">Extractora Maria la Baja</h2>
-    </div>
+    <!-- En templates/pdf_template.html -->
+<div class="header">
+    {% if logo_exists %}
+        <img src="{{ url_for('static', filename='images/logo-oleoflores.png', _external=True) }}" 
+             alt="Oleoflores Logo" class="logo">
+    {% endif %}
+    <h1 class="title">Registro de Entrada Proveedores</h1>
+    <h2 class="subtitle">Extractora Maria la Baja</h2>
+</div>
 
     <div class="image-container">
         <img src="{{ url_for('static', filename='uploads/' ~ image_filename, _external=True) }}" alt="Tiquete">

@@ -5,36 +5,301 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Pesaje - {{ codigo }}</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        .hidden {
+            display: none;
+        }
+        .peso-preview {
+            max-width: 100%;
+            height: auto;
+            margin-top: 15px;
+        }
+        #loadingOverlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(255, 255, 255, 0.9);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+    </style>
 </head>
 <body>
+    <!-- Overlay de carga -->
+    <div id="loadingOverlay">
+        <div class="text-center">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Procesando...</span>
+            </div>
+            <h4 class="mt-3">Procesando...</h4>
+        </div>
+    </div>
+
     <div class="container py-4">
         <h2 class="text-center mb-4">Registro de Pesaje</h2>
         <h4 class="text-center mb-4">Guía: {{ codigo }}</h4>
         
         <div class="card">
             <div class="card-body">
-                <form method="POST">
+                <!-- Selector de tipo de pesaje -->
+                <div class="mb-4">
+                    <label class="form-label">Tipo de Pesaje:</label>
+                    <select id="tipoPesaje" class="form-select" onchange="cambiarTipoPesaje()">
+                        <option value="">Seleccione tipo de pesaje</option>
+                        <option value="directo">Pesaje Directo</option>
+                        <option value="virtual">Pesaje Virtual</option>
+                    </select>
+                </div>
+
+                <!-- Formulario Pesaje Directo -->
+                <div id="pesajeDirectoForm" class="hidden">
                     <div class="mb-3">
-                        <label class="form-label">Tipo de Pesaje:</label>
-                        <select name="tipo_pesaje" class="form-select" required>
-                            <option value="">Seleccione tipo de pesaje</option>
-                            <option value="directo">Pesaje Directo</option>
-                            <option value="virtual">Pesaje Virtual</option>
-                        </select>
+                        <label class="form-label">Foto del Peso:</label>
+                        <input type="file" class="form-control" id="fotoPeso" accept="image/*">
+                        <img id="pesoPreview" class="peso-preview hidden">
                     </div>
-                    
-                    <div class="mb-3">
-                        <label class="form-label">Peso Bruto (kg):</label>
-                        <input type="number" name="peso_bruto" class="form-control" required>
-                    </div>
-                    
+                    <div id="resultadoPesajeDirecto" class="alert hidden"></div>
                     <div class="d-grid gap-2">
-                        <button type="submit" class="btn btn-primary">Registrar Pesaje</button>
-                        <a href="/guias/{{ codigo }}" class="btn btn-secondary">Cancelar</a>
+                        <button onclick="procesarPesajeDirecto()" class="btn btn-primary">Procesar Peso</button>
                     </div>
-                </form>
+                </div>
+
+                <!-- Formulario Pesaje Virtual -->
+                <div id="pesajeVirtualForm" class="hidden">
+                    <div id="solicitudAutorizacion">
+                        <div class="mb-3">
+                            <label class="form-label">Comentarios para solicitud:</label>
+                            <textarea class="form-control" id="comentariosSolicitud" rows="3" 
+                                    placeholder="Describa por qué requiere hacer el pesaje virtual..."></textarea>
+                        </div>
+                        <div class="d-grid gap-2">
+                            <button onclick="solicitarAutorizacion()" class="btn btn-warning">
+                                Solicitar Autorización
+                            </button>
+                        </div>
+                    </div>
+
+                    <div id="ingresoAutorizacion" class="hidden">
+                        <div class="mb-3">
+                            <label class="form-label">Código de Autorización:</label>
+                            <input type="text" class="form-control" id="codigoAutorizacion">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Peso Bruto (kg):</label>
+                            <input type="number" class="form-control" id="pesoVirtual" disabled>
+                        </div>
+                        <div class="d-grid gap-2">
+                            <button onclick="validarCodigo()" id="btnValidar" class="btn btn-primary">
+                                Validar Código
+                            </button>
+                            <button onclick="registrarPesoVirtual()" id="btnRegistrar" class="btn btn-success hidden">
+                                Registrar Peso
+                            </button>
+                            <button onclick="window.location.href='/ver_guia/{{ codigo }}'" class="btn btn-secondary">
+                                Cancelar
+                            </button>
+                        </div>
+                    </div>
+
+                <!-- Botones comunes -->
+                <div class="d-grid gap-2 mt-3">
+                    <a href="/ver_guia/{{ codigo }}" class="btn btn-secondary">Cancelar</a>
+                </div>
             </div>
         </div>
     </div>
+
+    <script>
+        function cambiarTipoPesaje() {
+            const tipo = document.getElementById('tipoPesaje').value;
+            document.getElementById('pesajeDirectoForm').classList.add('hidden');
+            document.getElementById('pesajeVirtualForm').classList.add('hidden');
+            
+            if (tipo === 'directo') {
+                document.getElementById('pesajeDirectoForm').classList.remove('hidden');
+            } else if (tipo === 'virtual') {
+                document.getElementById('pesajeVirtualForm').classList.remove('hidden');
+            }
+        }
+
+        // Previsualización de la imagen
+        document.getElementById('fotoPeso').addEventListener('change', function(e) {
+            const preview = document.getElementById('pesoPreview');
+            const file = e.target.files[0];
+            
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    preview.src = e.target.result;
+                    preview.classList.remove('hidden');
+                }
+                reader.readAsDataURL(file);
+            }
+        });
+
+        function mostrarCarga(mostrar) {
+            document.getElementById('loadingOverlay').style.display = mostrar ? 'flex' : 'none';
+        }
+
+        async function procesarPesajeDirecto() {
+            const fileInput = document.getElementById('fotoPeso');
+            if (!fileInput.files[0]) {
+                alert('Por favor seleccione una imagen del peso');
+                return;
+            }
+
+            mostrarCarga(true);
+            const formData = new FormData();
+            formData.append('foto', fileInput.files[0]);
+            formData.append('codigo', '{{ codigo }}');
+
+            try {
+                const response = await fetch('/procesar_pesaje_directo', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                const resultadoDiv = document.getElementById('resultadoPesajeDirecto');
+                resultadoDiv.classList.remove('hidden', 'alert-success', 'alert-danger');
+                
+                if (data.success) {
+                    resultadoDiv.classList.add('alert-success');
+                    resultadoDiv.innerHTML = `
+                        <h5>Peso procesado correctamente</h5>
+                        <p>Peso bruto: ${data.peso} kg</p>
+                        <button onclick="window.location.href='/ver_guia/{{ codigo }}'" class="btn btn-success">
+                            Continuar
+                        </button>
+                    `;
+                } else {
+                    resultadoDiv.classList.add('alert-danger');
+                    resultadoDiv.innerHTML = `
+                        <h5>Error en el procesamiento</h5>
+                        <p>${data.message}</p>
+                        <p>Por favor, intente nuevamente.</p>
+                    `;
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                alert('Error procesando el peso');
+            } finally {
+                mostrarCarga(false);
+            }
+        }
+
+        async function solicitarAutorizacion() {
+            const comentarios = document.getElementById('comentariosSolicitud').value;
+            if (!comentarios) {
+                alert('Por favor ingrese los comentarios para la solicitud');
+                return;
+            }
+
+            mostrarCarga(true);
+            try {
+                const response = await fetch('/solicitar_autorizacion_pesaje', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        codigo: '{{ codigo }}',
+                        comentarios: comentarios
+                    })
+                });
+
+                const data = await response.json();
+                if (data.success) {
+                    document.getElementById('solicitudAutorizacion').classList.add('hidden');
+                    document.getElementById('ingresoAutorizacion').classList.remove('hidden');
+                    alert('Solicitud enviada. Por favor contacte al administrador para obtener el código de autorización.');
+                } else {
+                    alert('Error al enviar la solicitud: ' + data.message);
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                alert('Error enviando la solicitud');
+            } finally {
+                mostrarCarga(false);
+            }
+        }
+
+        async function validarCodigo() {
+    const codigo = document.getElementById('codigoAutorizacion').value;
+    if (!codigo) {
+        alert('Por favor ingrese el código de autorización');
+        return;
+    }
+
+    mostrarCarga(true);
+    try {
+        const response = await fetch('/validar_codigo_autorizacion', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                codigo: '{{ codigo }}',
+                codigoAutorizacion: codigo
+            })
+        });
+
+        const data = await response.json();
+        if (data.success) {
+            document.getElementById('pesoVirtual').disabled = false;
+            document.getElementById('btnValidar').classList.add('hidden');
+            document.getElementById('btnRegistrar').classList.remove('hidden');
+            alert('Código validado correctamente. Puede ingresar el peso.');
+        } else {
+            alert('Código inválido. Por favor verifique.');
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        alert('Error validando el código');
+    } finally {
+        mostrarCarga(false);
+    }
+}
+
+async function registrarPesoVirtual() {
+    const peso = document.getElementById('pesoVirtual').value;
+    if (!peso) {
+        alert('Por favor ingrese el peso');
+        return;
+    }
+
+    mostrarCarga(true);
+    try {
+        const response = await fetch('/registrar_peso_virtual', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                codigo: '{{ codigo }}',
+                peso: peso
+            })
+        });
+
+        const data = await response.json();
+        if (data.success) {
+            window.location.href = `/ver_guia/{{ codigo }}`;
+        } else {
+            alert('Error al registrar el peso: ' + data.message);
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        alert('Error registrando el peso');
+    } finally {
+        mostrarCarga(false);
+    }
+}
+    </script>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>

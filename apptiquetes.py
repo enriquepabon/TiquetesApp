@@ -15,13 +15,41 @@ from io import BytesIO
 from PIL import Image
 from openpyxl import Workbook, load_workbook
 from openpyxl.drawing.image import Image as ExcelImage
-from utils import generate_pdf, generate_qr, get_drive_service, upload_to_drive
 from parser import parse_markdown_response
 from config import app
+from utils import Utils
+import random
+import string
+from datetime import datetime, timedelta
+
 
 # Configuración de Logging
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
+
+# Inicializar Utils
+utils = Utils(app)
+
+
+
+# En apptiquetes.py, al inicio después de las importaciones
+# Configuración de carpetas usando Utils
+REQUIRED_FOLDERS = [
+    os.path.join(app.static_folder, 'images'),
+    os.path.join(app.static_folder, 'uploads'),
+    os.path.join(app.static_folder, 'pdfs'),
+    os.path.join(app.static_folder, 'guias'),
+    os.path.join(app.static_folder, 'qr')
+]
+
+
+utils.ensure_directories(REQUIRED_FOLDERS)
+
+
+
+for folder in REQUIRED_FOLDERS:
+    os.makedirs(folder, exist_ok=True)
+
 
 # Configuración de carpetas
 app.config.update(
@@ -38,20 +66,27 @@ for folder in ['GUIAS_FOLDER', 'UPLOAD_FOLDER', 'PDF_FOLDER', 'EXCEL_FOLDER']:
 
 @app.route('/guias/<filename>')
 def serve_guia(filename):
+    """
+    Sirve los archivos HTML de las guías de proceso
+    """
     try:
-        app.logger.info(f"Intentando servir archivo: {filename}")
-        app.logger.info(f"Directorio de guías: {app.config['GUIAS_FOLDER']}")
-        app.logger.info(f"¿Archivo existe? {os.path.exists(os.path.join(app.config['GUIAS_FOLDER'], filename))}")
-        
+        logger.info(f"Intentando servir guía: {filename}")
         return send_from_directory(app.config['GUIAS_FOLDER'], filename)
     except Exception as e:
-        app.logger.error(f"Error sirviendo archivo: {str(e)}")
-        return render_template('error.html', message="Archivo no encontrado"), 404
+        logger.error(f"Error sirviendo guía: {str(e)}")
+        return render_template('error.html', message="Guía no encontrada"), 404
 
 # URLs de los Webhooks en Make.com
 PROCESS_WEBHOOK_URL = "https://hook.us2.make.com/asrfb3kv3cw4o4nd43wylyasfx5yq55f"
 REGISTER_WEBHOOK_URL = "https://hook.us2.make.com/f63o7rmsuixytjfqxq3gjljnscqhiedl"
 REVALIDATION_WEBHOOK_URL = "https://hook.us2.make.com/bok045bvtwpj89ig58nhrmx1x09yh56u"
+ADMIN_NOTIFICATION_WEBHOOK_URL = "https://hook.us2.make.com/wpeskbay7k21c3jnthu86lyo081r76fe"
+PESAJE_WEBHOOK_URL = "https://hook.us2.make.com/srw5ti54ulwuxtvocrj2lypa5pmq3im4"
+AUTORIZACION_WEBHOOK_URL = "https://hook.us2.make.com/py29fwgfrehp9il45832acotytu8xr5s"
+REGISTRO_PESO_WEBHOOK_URL = "https://hook.us2.make.com/agxyjbyswl2cg1bor1wdrlfcgrll0y15"
+
+codigos_autorizacion = {}
+
 
 # Extensiones permitidas para subir
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'bmp', 'tiff'}
@@ -61,17 +96,33 @@ def allowed_file(filename):
 
 @app.route('/', methods=['GET', 'POST'])
 def upload_file():
-    # Limpiar la sesión al acceder a la página principal
     session.clear()
     
     if request.method == 'POST':
         file = request.files.get('file')
         if file and allowed_file(file.filename):
-            image_filename = secure_filename(file.filename)
-            image_path = os.path.join(app.config['UPLOAD_FOLDER'], image_filename)
-            file.save(image_path)
-            session['image_filename'] = image_filename
-            return redirect(url_for('processing'))
+            try:
+                # Generar nombre seguro para el archivo
+                filename = secure_filename(file.filename)
+                # Asegurar que el directorio de uploads existe
+                os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+                
+                # Guardar el archivo
+                image_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+                file.save(image_path)
+                
+                # Verificar que el archivo se guardó correctamente
+                if os.path.exists(image_path):
+                    session['image_filename'] = filename
+                    logger.info(f"Imagen guardada exitosamente: {image_path}")
+                    return redirect(url_for('processing'))
+                else:
+                    logger.error(f"Error: El archivo no se guardó correctamente en {image_path}")
+                    return render_template('error.html', message="Error al guardar el archivo.")
+                    
+            except Exception as e:
+                logger.error(f"Error guardando archivo: {str(e)}")
+                return render_template('error.html', message="Error procesando el archivo.")
         else:
             return render_template('error.html', message="Tipo de archivo no permitido o no se ha seleccionado ningún archivo.")
     return render_template('index.html')
@@ -321,7 +372,7 @@ def generate_pdf(parsed_data, image_filename, fecha_procesamiento, hora_procesam
         
         qr_filename = f"qr_{qr_data['codigo']}_{int(time.time())}.png"
         qr_path = os.path.join(app.static_folder, qr_filename)
-        generate_qr(qr_data, qr_path)
+        utils.generate_qr(qr_data, qr_path)
         
         # Renderizar plantilla
         rendered = render_template(
@@ -358,55 +409,46 @@ def generate_pdf(parsed_data, image_filename, fecha_procesamiento, hora_procesam
 def register():
     try:
         logger.info("Iniciando proceso de registro")
-        data = request.get_json()
-        logger.info(f"Datos recibidos en register: {data}")
         
         parsed_data = session.get('parsed_data', {})
         image_filename = session.get('image_filename', '')
         
-        logger.info(f"Datos de sesión - parsed_data: {parsed_data}")
-        logger.info(f"Datos de sesión - image_filename: {image_filename}")
-        
         if not parsed_data or not image_filename:
-            logger.error("Faltan datos necesarios para el registro")
             return jsonify({
                 "status": "error",
                 "message": "No hay datos para registrar."
             }), 400
 
-        # Obtener fecha del tiquete original
-        fecha_tiquete = None
-        for row in parsed_data.get('table_data', []):
-            if row['campo'] == 'Fecha':
-                fecha_tiquete = row['sugerido'] if row['sugerido'] != 'No disponible' else row['original']
-                break
-        
-        # Si no hay fecha en el tiquete, usar la fecha actual
-        if not fecha_tiquete or fecha_tiquete == 'No disponible':
-            fecha_tiquete = datetime.now().strftime("%Y-%m-%d")
-        
-        fecha_procesamiento = fecha_tiquete
-        hora_procesamiento = datetime.now().strftime("%H:%M:%S")
-        
-        # Extraer todos los datos actualizados
-        revalidation_data = {}
-        for row in parsed_data.get('table_data', []):
-            campo = row['campo']
-            valor = row['sugerido'] if row['sugerido'] != 'No disponible' else row['original']
-            revalidation_data[campo] = valor
-
-        # Agregar datos de revalidación recibidos
-        if data.get('Nombre'):
-            revalidation_data['Nombre del Agricultor'] = data['Nombre']
-        if data.get('Codigo'):
-            revalidation_data['Código'] = data['Codigo']
-        if data.get('Nota'):
-            revalidation_data['nota'] = data['Nota']
-        
-        logger.info(f"Datos de revalidación completos: {revalidation_data}")
-        
         try:
-            # Generar código QR
+            data = request.get_json() if request.is_json else {}
+            
+            fecha_tiquete = utils.get_ticket_date(parsed_data)
+            hora_procesamiento = datetime.now().strftime("%H:%M:%S")
+            
+            revalidation_data = utils.prepare_revalidation_data(parsed_data, data)
+            
+            # Enviar datos al webhook de registro
+            try:
+                response = requests.post(
+                    REGISTER_WEBHOOK_URL,
+                    json={
+                        "parsed_data": parsed_data,
+                        "revalidation_data": revalidation_data,
+                        "fecha": fecha_tiquete,
+                        "hora": hora_procesamiento
+                    },
+                    headers={'Content-Type': 'application/json'}
+                )
+                
+                if response.status_code != 200:
+                    logger.error(f"Error en webhook de registro: {response.text}")
+                    raise Exception("Error al registrar en el sistema central")
+                    
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Error llamando webhook de registro: {str(e)}")
+                raise Exception("Error de conexión con el sistema central")
+            
+            # Generar QR
             codigo = revalidation_data.get('Código', '')
             timestamp = int(time.time())
             qr_filename = f"qr_{codigo}_{timestamp}.png"
@@ -422,27 +464,21 @@ def register():
                 "cantidad_racimos": revalidation_data.get('Cantidad de Racimos', '')
             }
             
-            # Generar el QR
-            generate_qr(qr_data, qr_path)
+            utils.generate_qr(qr_data, qr_path)
             session['qr_filename'] = qr_filename
             
-            logger.info(f"QR generado: {qr_filename}")
-            
-            # Generar PDF con todos los datos
-            pdf_filename = generate_pdf(
+            # Generar PDF
+            pdf_filename = utils.generate_pdf(
                 parsed_data=parsed_data,
                 image_filename=image_filename,
-                fecha_procesamiento=fecha_procesamiento,
+                fecha_procesamiento=fecha_tiquete,
                 hora_procesamiento=hora_procesamiento,
                 revalidation_data=revalidation_data
             )
             
-            # Guardar todos los datos actualizados en la sesión
             session['pdf_filename'] = pdf_filename
             session['revalidation_data'] = revalidation_data
             session['estado_actual'] = 'pesaje'
-            
-            logger.info(f"PDF generado y datos guardados: {pdf_filename}")
             
             return jsonify({
                 "status": "success",
@@ -451,21 +487,21 @@ def register():
                 "qr_filename": qr_filename
             })
             
-        except Exception as pdf_error:
-            logger.error(f"Error generando documentos: {str(pdf_error)}")
-            logger.error(traceback.format_exc())
+        except Exception as e:
+            logger.error(f"Error procesando registro: {str(e)}")
             return jsonify({
                 "status": "error",
-                "message": f"Error generando documentos: {str(pdf_error)}"
+                "message": f"Error procesando registro: {str(e)}"
             }), 500
             
     except Exception as e:
         logger.error(f"Error general en registro: {str(e)}")
-        logger.error(traceback.format_exc())
         return jsonify({
             "status": "error",
             "message": f"Error al registrar: {str(e)}"
         }), 500
+
+
     
 @app.route('/review_pdf')
 def review_pdf():
@@ -570,33 +606,282 @@ def actualizar_estado(codigo):
 
 @app.route('/pesaje/<codigo>', methods=['GET', 'POST'])
 def pesaje(codigo):
+    """
+    Maneja la vista de pesaje y el procesamiento del mismo
+    """
     try:
+        # Obtener datos de la guía
         datos_guia = obtener_datos_guia(codigo)
-        
+        if not datos_guia:
+            return render_template('error.html', message="Guía no encontrada"), 404
+
         if request.method == 'POST':
-            peso_bruto = request.form.get('peso_bruto')
             tipo_pesaje = request.form.get('tipo_pesaje')
+            peso_bruto = request.form.get('peso_bruto')
             
-            # Guardar datos de pesaje con fecha y hora
-            now = datetime.now()
+            # Guardar datos de pesaje
             session['peso_bruto'] = peso_bruto
             session['tipo_pesaje'] = tipo_pesaje
-            session['fecha_pesaje'] = now.strftime("%Y-%m-%d")
-            session['hora_pesaje'] = now.strftime("%H:%M:%S")
-            session['estado_actual'] = 'clasificacion'
+            session['fecha_pesaje'] = datetime.now().strftime("%Y-%m-%d")
+            session['hora_pesaje'] = datetime.now().strftime("%H:%M:%S")
+            
+            # Actualizar estado
+            actualizar_estado_guia(codigo, {
+                'estado': 'pesaje_completado',
+                'peso_bruto': peso_bruto,
+                'tipo_pesaje': tipo_pesaje
+            })
             
             return redirect(url_for('ver_guia', codigo=codigo))
             
-        return render_template(
-            'pesaje.html',
-            codigo=codigo,
-            datos=datos_guia
-        )
+        # Renderizar template de pesaje
+        return render_template('pesaje.html', 
+                            codigo=codigo,
+                            datos=datos_guia)
+                            
     except Exception as e:
-        app.logger.error(f"Error en pesaje: {str(e)}")
+        logger.error(f"Error en pesaje: {str(e)}")
+        logger.error(traceback.format_exc())
         return render_template('error.html', message="Error procesando pesaje"), 500
-    
-    # En apptiquetes.py, agrega estas funciones
+
+@app.route('/procesar_pesaje_directo', methods=['POST'])
+def procesar_pesaje_directo():
+    """
+    Procesa la imagen del pesaje directo
+    """
+    try:
+        if 'foto' not in request.files:
+            return jsonify({'success': False, 'message': 'No se encontró la imagen'})
+        
+        foto = request.files['foto']
+        codigo = request.form.get('codigo')
+        
+        if not foto:
+            return jsonify({'success': False, 'message': 'Archivo no válido'})
+            
+        # Guardar la imagen temporalmente
+        filename = secure_filename(foto.filename)
+        temp_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        foto.save(temp_path)
+        
+        # Enviar al webhook de Make para procesamiento
+        with open(temp_path, 'rb') as f:
+            response = requests.post(
+                PESAJE_WEBHOOK_URL,
+                files={'file': (filename, f, 'image/jpeg')},
+                data={'codigo': codigo}
+            )
+        
+        # Procesar respuesta del webhook
+        if response.status_code == 200:
+            response_text = response.text
+            
+            # Verificar si la respuesta contiene el mensaje de éxito
+            if "Exitoso!" in response_text:
+                # Extraer el peso bruto usando una expresión regular
+                import re
+                peso_match = re.search(r'El peso bruto es: (\d+\.?\d*)', response_text)
+                if peso_match:
+                    peso = peso_match.group(1)
+                    
+                    # Registrar en Make.com
+                    registro_response = requests.post(
+                        REGISTRO_PESO_WEBHOOK_URL,
+                        json={
+                            'codigo': codigo,
+                            'peso_bruto': peso,
+                            'tipo_pesaje': 'directo',
+                            'fecha': datetime.now().strftime("%Y-%m-%d"),
+                            'hora': datetime.now().strftime("%H:%M:%S")
+                        }
+                    )
+                    
+                    if registro_response.status_code != 200:
+                        return jsonify({
+                            'success': False,
+                            'message': 'Error registrando el peso en el sistema'
+                        })
+                    
+                    # Guardar datos del pesaje en sesión
+                    session['peso_bruto'] = peso
+                    session['tipo_pesaje'] = 'directo'
+                    session['fecha_pesaje'] = datetime.now().strftime("%Y-%m-%d")
+                    session['hora_pesaje'] = datetime.now().strftime("%H:%M:%S")
+                    
+                    return jsonify({
+                        'success': True,
+                        'peso': peso,
+                        'message': 'Peso procesado correctamente'
+                    })
+                else:
+                    return jsonify({
+                        'success': False,
+                        'message': 'No se pudo extraer el peso de la respuesta'
+                    })
+            else:
+                # Si no es exitoso, devolver el mensaje de error
+                return jsonify({
+                    'success': False,
+                    'message': 'El código no corresponde a la guía'
+                })
+        else:
+            return jsonify({
+                'success': False,
+                'message': 'Error procesando la imagen'
+            })
+            
+    except Exception as e:
+        logger.error(f"Error en pesaje directo: {str(e)}")
+        logger.error(traceback.format_exc())
+        return jsonify({'success': False, 'message': str(e)})
+
+@app.route('/solicitar_autorizacion_pesaje', methods=['POST'])
+def solicitar_autorizacion_pesaje():
+    """
+    Procesa la solicitud de autorización para pesaje virtual
+    """
+    try:
+        data = request.get_json()
+        codigo = data.get('codigo')
+        comentarios = data.get('comentarios')
+        
+        if not codigo or not comentarios:
+            return jsonify({
+                'success': False,
+                'message': 'Faltan datos requeridos'
+            })
+            
+        # Generar código aleatorio de 6 caracteres
+        codigo_autorizacion = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
+        
+        # Guardar código con expiración de 1 hora
+        codigos_autorizacion[codigo] = {
+            'codigo': codigo_autorizacion,
+            'expiracion': datetime.now() + timedelta(hours=1)
+        }
+        
+        # Enviar solicitud a Make
+        response = requests.post(
+            AUTORIZACION_WEBHOOK_URL,
+            json={
+                'codigo_guia': codigo,
+                'comentarios': comentarios,
+                'codigo_autorizacion': codigo_autorizacion
+            }
+        )
+        
+        if response.status_code == 200:
+            return jsonify({'success': True})
+        else:
+            return jsonify({
+                'success': False,
+                'message': 'Error enviando la solicitud'
+            })
+            
+    except Exception as e:
+        logger.error(f"Error en solicitud de autorización: {str(e)}")
+        logger.error(traceback.format_exc())
+        return jsonify({'success': False, 'message': str(e)})
+
+@app.route('/validar_codigo_autorizacion', methods=['POST'])
+def validar_codigo_autorizacion():
+    """
+    Valida el código de autorización para pesaje virtual
+    """
+    try:
+        data = request.get_json()
+        codigo_guia = data.get('codigo')
+        codigo_autorizacion = data.get('codigoAutorizacion')
+        
+        if not codigo_guia or not codigo_autorizacion:
+            return jsonify({
+                'success': False,
+                'message': 'Faltan datos requeridos'
+            })
+            
+        # Verificar código
+        auth_data = codigos_autorizacion.get(codigo_guia)
+        if not auth_data:
+            return jsonify({
+                'success': False,
+                'message': 'No hay solicitud de autorización activa'
+            })
+            
+        # Verificar expiración
+        if datetime.now() > auth_data['expiracion']:
+            codigos_autorizacion.pop(codigo_guia)
+            return jsonify({
+                'success': False,
+                'message': 'El código ha expirado'
+            })
+            
+        # Verificar código
+        if auth_data['codigo'] != codigo_autorizacion:
+            return jsonify({
+                'success': False,
+                'message': 'Código inválido'
+            })
+            
+        return jsonify({'success': True})
+        
+    except Exception as e:
+        logger.error(f"Error validando código: {str(e)}")
+        logger.error(traceback.format_exc())
+        return jsonify({'success': False, 'message': str(e)})
+
+@app.route('/registrar_peso_virtual', methods=['POST'])
+def registrar_peso_virtual():
+    """
+    Registra el peso ingresado manualmente después de la autorización
+    """
+    try:
+        data = request.get_json()
+        codigo = data.get('codigo')
+        peso = data.get('peso')
+        
+        if not codigo or not peso:
+            return jsonify({
+                'success': False,
+                'message': 'Faltan datos requeridos'
+            })
+        
+        # Registrar en Make.com
+        response = requests.post(
+            REGISTRO_PESO_WEBHOOK_URL,  # Agregar esta URL en las configuraciones
+            json={
+                'codigo': codigo,
+                'peso_bruto': peso,
+                'tipo_pesaje': 'virtual',
+                'fecha': datetime.now().strftime("%Y-%m-%d"),
+                'hora': datetime.now().strftime("%H:%M:%S")
+            }
+        )
+        
+        if response.status_code != 200:
+            return jsonify({
+                'success': False,
+                'message': 'Error registrando en el sistema'
+            })
+            
+        # Guardar datos del pesaje en sesión
+        session['peso_bruto'] = peso
+        session['tipo_pesaje'] = 'virtual'
+        session['fecha_pesaje'] = datetime.now().strftime("%Y-%m-%d")
+        session['hora_pesaje'] = datetime.now().strftime("%H:%M:%S")
+        
+        # Actualizar estado
+        actualizar_estado_guia(codigo, {
+            'estado': 'pesaje_completado',
+            'peso_bruto': peso,
+            'tipo_pesaje': 'virtual'
+        })
+        
+        return jsonify({'success': True})
+        
+    except Exception as e:
+        logger.error(f"Error registrando peso virtual: {str(e)}")
+        logger.error(traceback.format_exc())
+        return jsonify({'success': False, 'message': str(e)})
 
 def obtener_datos_guia(codigo):
     """
@@ -608,13 +893,6 @@ def obtener_datos_guia(codigo):
         revalidation_data = session.get('revalidation_data', {})
         image_filename = session.get('image_filename')
 
-        # Verificar la existencia de la imagen
-        if image_filename:
-            image_path = os.path.join(app.config['UPLOAD_FOLDER'], image_filename)
-            if not os.path.exists(image_path):
-                image_filename = None
-                logger.error(f"Imagen no encontrada en: {image_path}")
-
         # Fecha y hora actual
         now = datetime.now()
         
@@ -622,7 +900,7 @@ def obtener_datos_guia(codigo):
         datos = {
             'codigo': codigo,
             'nombre': '',
-            'fecha_registro': now.strftime("%d/%m/%Y"),
+            'fecha_registro': '',  # Se llenará con la fecha del tiquete
             'hora_registro': now.strftime("%H:%M:%S"),
             'placa': '',
             'transportador': '',
@@ -639,11 +917,18 @@ def obtener_datos_guia(codigo):
                 valor = row['original'] if row['sugerido'] == 'No disponible' else row['sugerido']
                 
                 if campo == 'Fecha':
+                    # Intentar diferentes formatos de fecha
                     try:
-                        fecha_obj = datetime.strptime(valor, "%Y-%m-%d")
+                        # Intenta formato dd-mm-yyyy
+                        fecha_obj = datetime.strptime(valor, "%d-%m-%Y")
                         datos['fecha_registro'] = fecha_obj.strftime("%d/%m/%Y")
-                    except:
-                        datos['fecha_registro'] = valor
+                    except ValueError:
+                        try:
+                            # Intenta formato yyyy-mm-dd
+                            fecha_obj = datetime.strptime(valor, "%Y-%m-%d")
+                            datos['fecha_registro'] = fecha_obj.strftime("%d/%m/%Y")
+                        except ValueError:
+                            datos['fecha_registro'] = valor
                 elif campo == 'Nombre del Agricultor':
                     datos['nombre'] = valor
                 elif campo == 'Código':
@@ -654,13 +939,10 @@ def obtener_datos_guia(codigo):
                     datos['cantidad_racimos'] = valor
                 elif campo == 'Transportador':
                     datos['transportador'] = valor
-        
-        # Sobrescribir con datos de revalidación si existen
-        if revalidation_data:
-            if 'Nombre del Agricultor' in revalidation_data:
-                datos['nombre'] = revalidation_data['Nombre del Agricultor']
-            if 'Código' in revalidation_data:
-                datos['codigo'] = revalidation_data['Código']
+
+        # Si no se encontró fecha, usar la fecha actual
+        if not datos['fecha_registro']:
+            datos['fecha_registro'] = now.strftime("%d/%m/%Y")
         
         logger.info(f"Datos obtenidos para guía {codigo}: {datos}")
         return datos
@@ -669,7 +951,7 @@ def obtener_datos_guia(codigo):
         logger.error(f"Error obteniendo datos de guía: {str(e)}")
         logger.error(traceback.format_exc())
         return {}
-
+    
 def actualizar_estado_guia(codigo, datos):
     """
     Actualiza el estado y datos de la guía
@@ -700,13 +982,15 @@ def ver_guia(codigo):
         # Generar código de guía con formato: codigo_fecha_hora
         now = datetime.now()
         fecha_hora = now.strftime("%Y%m%d_%H%M%S")
-        codigo_guia = f"{codigo}_{fecha_hora}"
         
-        # Actualizar datos_guia con el nuevo código
+        # Formatear fecha para mostrar
+        fecha_formato = now.strftime("%d/%m/%Y")
+        
+        # Actualizar datos_guia con el nuevo código y fecha
         datos_guia.update({
-            'codigo_guia': codigo_guia,
-            'fecha_formato': now.strftime("%d/%m/%Y"),  # Formato más legible para la fecha
-            'hora_formato': now.strftime("%H:%M:%S")    # Formato para la hora
+            'codigo_guia': f"{codigo}_{fecha_hora}",
+            'fecha_formato': fecha_formato,
+            'hora_formato': now.strftime("%H:%M:%S")
         })
             
         return render_template('guia_template.html', **datos_guia)
@@ -714,6 +998,46 @@ def ver_guia(codigo):
     except Exception as e:
         logger.error(f"Error mostrando guía: {str(e)}")
         return render_template('error.html', message="Error mostrando guía"), 500
+    
+@app.route('/notify-admin', methods=['POST'])
+def notify_admin():
+    try:
+        data = request.get_json()
+        
+        # Preparar los datos para el webhook de notificación
+        notification_data = {
+            "codigo": data.get('codigo', ''),
+            "nombre": data.get('nombre', ''),
+            "nota": data.get('nota', ''),
+            "fecha_notificacion": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "tipo_error": "Validación fallida"
+        }
+        
+        # Llamar al webhook de notificación
+        response = requests.post(
+            ADMIN_NOTIFICATION_WEBHOOK_URL,
+            json=notification_data,
+            headers={'Content-Type': 'application/json'}
+        )
+        
+        logger.info(f"Notificación admin enviada: {response.status_code}")
+        logger.info(f"Respuesta webhook: {response.text}")
+        
+        if response.status_code == 200:
+            return jsonify({
+                "status": "success",
+                "message": "Administrador notificado exitosamente"
+            })
+        else:
+            raise Exception(f"Error en webhook: {response.text}")
+            
+    except Exception as e:
+        logger.error(f"Error notificando admin: {str(e)}")
+        logger.error(traceback.format_exc())
+        return jsonify({
+            "status": "error",
+            "message": f"Error al notificar: {str(e)}"
+        }), 500
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5002)

@@ -1,5 +1,3 @@
-<!-- templates/revalidation_results.html -->
-<!-- templates/revalidation_results.html -->
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -53,80 +51,133 @@
 </head>
 <body>
     <div class="container py-5">
-        <!-- Mensaje de éxito -->
-        <div class="alert alert-success mb-4">
-            <h4 class="alert-heading">¡Validación Exitosa!</h4>
-            <p id="validationMessage"></p>
-        </div>
-
-        <!-- Tabla de datos validados -->
-        <div class="validation-table">
-            <h5 class="mb-3">Datos Validados:</h5>
-            <table class="table table-bordered">
-                <thead>
-                    <tr>
-                        <th>Campo</th>
-                        <th>Valor Original</th>
-                        <th>Valor Validado</th>
-                    </tr>
-                </thead>
-                <tbody id="validationTableBody">
-                    <!-- Se llenará dinámicamente -->
-                </tbody>
-            </table>
-        </div>
-
-        <!-- Botones de acción -->
-        <div class="d-flex justify-content-end gap-3 mt-4">
-            <button id="generateBtn" class="btn btn-success">
-                <span>Generar QR y Guardar</span>
-                <div class="spinner-border spinner-border-sm loading" role="status">
-                    <span class="visually-hidden">Cargando...</span>
-                </div>
-            </button>
-            <button id="newScanBtn" class="btn btn-primary">Escanear Otro</button>
+        <div id="content">
+            <!-- El contenido se llenará dinámicamente -->
         </div>
     </div>
 
     <script>
         // Obtener datos de sessionStorage
         const revalidationData = JSON.parse(sessionStorage.getItem('revalidationData'));
+        const content = document.getElementById('content');
         
-        // Mostrar mensaje de validación
-        const validationMessage = document.getElementById('validationMessage');
-        if (revalidationData && revalidationData.data && revalidationData.data.Nota) {
-            validationMessage.textContent = revalidationData.data.Nota;
-        } else {
-            validationMessage.textContent = 'La validación fue exitosa.';
+        function renderContent() {
+            if (revalidationData?.data?.Codigo === "No encontrado" || revalidationData?.data?.Nombre === "No encontrado") {
+                // Caso no exitoso
+                content.innerHTML = `
+                    <div class="alert alert-danger mb-4">
+                        <h4 class="alert-heading">¡Validación No Exitosa!</h4>
+                        <p>No fue exitosa la validación, por favor reintentar con otro código o nombre o contactar al administrador.</p>
+                        <p>${revalidationData?.data?.Nota || ''}</p>
+                    </div>
+
+                    <div class="d-flex justify-content-center gap-3 mt-4">
+                        <button onclick="window.history.back()" class="btn btn-secondary">
+                            <i class="fas fa-arrow-left me-2"></i>Atrás
+                        </button>
+                        
+                        <button id="avisoAdmin" class="btn btn-warning">
+                            <i class="fas fa-envelope me-2"></i>Aviso Administrador
+                        </button>
+                        
+                        <button onclick="window.location.href='/'" class="btn btn-primary">
+                            <i class="fas fa-qrcode me-2"></i>Escanear Otro
+                        </button>
+                    </div>
+                `;
+
+                // Agregar evento para el botón de aviso al administrador
+                document.getElementById('avisoAdmin').addEventListener('click', notifyAdmin);
+            } else {
+                // Caso exitoso
+                content.innerHTML = `
+                    <div class="alert alert-success mb-4">
+                        <h4 class="alert-heading">¡Validación Exitosa!</h4>
+                        <p>${revalidationData?.data?.Nota || 'La validación fue exitosa.'}</p>
+                    </div>
+
+                    <div class="validation-table">
+                        <h5 class="mb-3">Datos Validados:</h5>
+                        <table class="table table-bordered">
+                            <thead>
+                                <tr>
+                                    <th>Campo</th>
+                                    <th>Valor Original</th>
+                                    <th>Valor Validado</th>
+                                </tr>
+                            </thead>
+                            <tbody id="validationTableBody">
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div class="d-flex justify-content-end gap-3 mt-4">
+                        <button id="generateBtn" class="btn btn-success">
+                            <span>Generar QR y Guardar</span>
+                            <div class="spinner-border spinner-border-sm loading" role="status">
+                                <span class="visually-hidden">Cargando...</span>
+                            </div>
+                        </button>
+                        <button id="newScanBtn" class="btn btn-primary">Escanear Otro</button>
+                    </div>
+                `;
+
+                // Llenar la tabla de validación
+                const tableBody = document.getElementById('validationTableBody');
+                const originalData = revalidationData?.data?.modificaciones || [];
+                const validatedData = {
+                    'Código': revalidationData?.data?.Codigo,
+                    'Nombre': revalidationData?.data?.Nombre
+                };
+
+                originalData.forEach(mod => {
+                    const row = document.createElement('tr');
+                    row.innerHTML = `
+                        <td>${mod.campo}</td>
+                        <td>${mod.valor_anterior}</td>
+                        <td class="modified-cell">
+                            ${mod.campo === 'Código' ? validatedData['Código'] : validatedData['Nombre']}
+                            <span class="modified-indicator">modificado manual</span>
+                        </td>
+                    `;
+                    tableBody.appendChild(row);
+                });
+
+                // Agregar eventos a los botones
+                document.getElementById('generateBtn').addEventListener('click', generateQRAndSave);
+                document.getElementById('newScanBtn').addEventListener('click', () => window.location.href = '/');
+            }
         }
 
-        // Llenar la tabla de validación
-        const tableBody = document.getElementById('validationTableBody');
-        const originalData = revalidationData?.data?.modificaciones || [];
-        const validatedData = {
-            'Código': revalidationData?.data?.Codigo,
-            'Nombre': revalidationData?.data?.Nombre
-        };
+        async function notifyAdmin() {
+            try {
+                const response = await fetch('/notify-admin', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        codigo: revalidationData?.data?.Codigo,
+                        nombre: revalidationData?.data?.Nombre,
+                        nota: revalidationData?.data?.Nota
+                    })
+                });
 
-        // Crear filas para cada campo modificado
-        originalData.forEach(mod => {
-            const row = document.createElement('tr');
-            row.innerHTML = `
-                <td>${mod.campo}</td>
-                <td>${mod.valor_anterior}</td>
-                <td class="modified-cell">
-                    ${mod.campo === 'Código' ? validatedData['Código'] : validatedData['Nombre']}
-                    <span class="modified-indicator">modificado manual</span>
-                </td>
-            `;
-            tableBody.appendChild(row);
-        });
+                const data = await response.json();
+                if(data.status === 'success') {
+                    alert('Administrador notificado exitosamente');
+                } else {
+                    alert('Error al notificar al administrador');
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                alert('Error al notificar al administrador');
+            }
+        }
 
-        // Botón Generar QR y Guardar
-        const generateBtn = document.getElementById('generateBtn');
-        const loading = generateBtn.querySelector('.loading');
-        
-        generateBtn.addEventListener('click', async () => {
+        async function generateQRAndSave() {
+            const generateBtn = document.getElementById('generateBtn');
+            const loading = generateBtn.querySelector('.loading');
             try {
                 generateBtn.disabled = true;
                 loading.classList.add('active');
@@ -138,8 +189,8 @@
                     },
                     body: JSON.stringify({
                         ...revalidationData.data,
-                        codigo_validado: validatedData['Código'],
-                        nombre_validado: validatedData['Nombre']
+                        codigo_validado: revalidationData?.data?.Codigo,
+                        nombre_validado: revalidationData?.data?.Nombre
                     })
                 });
 
@@ -154,15 +205,13 @@
                 generateBtn.disabled = false;
                 loading.classList.remove('active');
             }
-        });
+        }
 
-        // Botón Escanear Otro
-        const newScanBtn = document.getElementById('newScanBtn');
-        newScanBtn.addEventListener('click', () => {
-            window.location.href = '/';
-        });
+        // Renderizar el contenido inicial
+        renderContent();
     </script>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
 </body>
 </html>
