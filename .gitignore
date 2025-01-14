@@ -10,6 +10,7 @@ instance/
 .webassets-cache
 
 # Archivos de configuración
+API_Keys.env
 .env
 *.pyc
 
@@ -30,5 +31,48 @@ __pycache__/
 *.pyc
 static/pdfs/*.pdf
 static/qr_*.png
-
 service-account.json
+# Añadir al final de su .gitignore actual
+
+# macOS specific files
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Thumbnails
+._*
+
+# Archivos de backup
+*.bak
+*.gho
+*.ori
+*.orig
+*.tmp
+
+# Archivos de logs adicionales
+*.log.*
+
+# Directorios de logs
+logs/
+
+# Archivos de sistema
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Archivos de dependencias
+node_modules/
+bower_components/
+
+# Archivos de compilación
+*.com
+*.class
+*.dll
+*.exe
+*.o
+*.so
+
+# Directorios de salida de herramientas de construcción
+build/
+dist/
+out/
