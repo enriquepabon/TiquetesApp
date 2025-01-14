@@ -21,6 +21,7 @@ from utils import Utils
 import random
 import string
 from datetime import datetime, timedelta
+from knowledge_updater import knowledge_bp
 
 
 # Configuración de Logging
@@ -30,7 +31,7 @@ logger = logging.getLogger(__name__)
 # Inicializar Utils
 utils = Utils(app)
 
-
+app.register_blueprint(knowledge_bp)
 
 # En apptiquetes.py, al inicio después de las importaciones
 # Configuración de carpetas usando Utils
@@ -646,9 +647,6 @@ def pesaje(codigo):
 
 @app.route('/procesar_pesaje_directo', methods=['POST'])
 def procesar_pesaje_directo():
-    """
-    Procesa la imagen del pesaje directo
-    """
     try:
         if 'foto' not in request.files:
             return jsonify({'success': False, 'message': 'No se encontró la imagen'})
@@ -676,13 +674,23 @@ def procesar_pesaje_directo():
         if response.status_code == 200:
             response_text = response.text
             
-            # Verificar si la respuesta contiene el mensaje de éxito
             if "Exitoso!" in response_text:
-                # Extraer el peso bruto usando una expresión regular
                 import re
                 peso_match = re.search(r'El peso bruto es: (\d+\.?\d*)', response_text)
                 if peso_match:
                     peso = peso_match.group(1)
+                    fecha_hora_actual = datetime.now()
+                    
+                    # Guardar nombre de la imagen
+                    session['imagen_pesaje'] = filename
+                    
+                    # Generar PDF de pesaje
+                    pdf_pesaje = generar_pdf_pesaje(
+                        codigo=codigo,
+                        peso_bruto=peso,
+                        tipo_pesaje='directo',
+                        imagen_peso=filename
+                    )
                     
                     # Registrar en Make.com
                     registro_response = requests.post(
@@ -691,8 +699,8 @@ def procesar_pesaje_directo():
                             'codigo': codigo,
                             'peso_bruto': peso,
                             'tipo_pesaje': 'directo',
-                            'fecha': datetime.now().strftime("%Y-%m-%d"),
-                            'hora': datetime.now().strftime("%H:%M:%S")
+                            'fecha': fecha_hora_actual.strftime("%Y-%m-%d"),
+                            'hora': fecha_hora_actual.strftime("%H:%M:%S")
                         }
                     )
                     
@@ -702,24 +710,39 @@ def procesar_pesaje_directo():
                             'message': 'Error registrando el peso en el sistema'
                         })
                     
-                    # Guardar datos del pesaje en sesión
-                    session['peso_bruto'] = peso
-                    session['tipo_pesaje'] = 'directo'
-                    session['fecha_pesaje'] = datetime.now().strftime("%Y-%m-%d")
-                    session['hora_pesaje'] = datetime.now().strftime("%H:%M:%S")
+                    # Construir datos completos para guardar
+                    datos_pesaje = {
+                        'estado': 'pesaje_completado',
+                        'estado_actual': 'pesaje_completado',
+                        'peso_bruto': peso,
+                        'tipo_pesaje': 'directo',
+                        'fecha_pesaje': fecha_hora_actual.strftime("%Y-%m-%d"),
+                        'hora_pesaje': fecha_hora_actual.strftime("%H:%M:%S"),
+                        'pdf_pesaje': pdf_pesaje,
+                        'imagen_pesaje': filename,
+                        'codigo_guia': f"{codigo}_{fecha_hora_actual.strftime('%Y%m%d_%H%M%S')}"
+                    }
+                    
+                    # Guardar en sesión
+                    session.update(datos_pesaje)
+                    
+                    # Actualizar estado en la guía
+                    actualizar_estado_guia(codigo, datos_pesaje)
+                    
+                    logger.info(f"Estado actualizado para guía {codigo}: {datos_pesaje}")
                     
                     return jsonify({
                         'success': True,
                         'peso': peso,
                         'message': 'Peso procesado correctamente'
                     })
+                    
                 else:
                     return jsonify({
                         'success': False,
                         'message': 'No se pudo extraer el peso de la respuesta'
                     })
             else:
-                # Si no es exitoso, devolver el mensaje de error
                 return jsonify({
                     'success': False,
                     'message': 'El código no corresponde a la guía'
@@ -828,12 +851,48 @@ def validar_codigo_autorizacion():
         logger.error(f"Error validando código: {str(e)}")
         logger.error(traceback.format_exc())
         return jsonify({'success': False, 'message': str(e)})
+    
+def generar_pdf_pesaje(codigo, peso_bruto, tipo_pesaje, imagen_peso=None):
+    try:
+        datos_guia = obtener_datos_guia(codigo)
+        
+        # Preparar datos para el PDF
+        fecha_actual = datetime.now()
+        # Usar la fecha del registro en lugar de la fecha actual para el nombre del archivo
+        fecha_registro = datos_guia.get('fecha_registro', '').replace('/', '-')
+        
+        datos_pdf = {
+            'codigo': codigo,
+            'nombre': datos_guia.get('nombre', ''),
+            'peso_bruto': peso_bruto,
+            'tipo_pesaje': tipo_pesaje,
+            'fecha_pesaje': fecha_actual.strftime('%d/%m/%Y'),
+            'hora_pesaje': fecha_actual.strftime('%H:%M:%S'),
+            'fecha_generacion': fecha_actual.strftime('%d/%m/%Y'),
+            'hora_generacion': fecha_actual.strftime('%H:%M:%S'),
+            'imagen_peso': imagen_peso,
+            'qr_filename': session.get('qr_filename')
+        }
+        
+        # Generar PDF
+        rendered = render_template('pesaje_pdf_template.html', **datos_pdf)
+        pdf_filename = f"pesaje_{codigo}_{fecha_actual.strftime('%Y%m%d_%H%M%S')}.pdf"
+        pdf_path = os.path.join(app.config['PDF_FOLDER'], pdf_filename)
+        
+        # Asegurar que el directorio existe
+        os.makedirs(os.path.dirname(pdf_path), exist_ok=True)
+        
+        HTML(string=rendered, base_url=app.static_folder).write_pdf(pdf_path)
+        logger.info(f"PDF de pesaje generado exitosamente: {pdf_filename}")
+        return pdf_filename
+        
+    except Exception as e:
+        logger.error(f"Error generando PDF de pesaje: {str(e)}")
+        logger.error(traceback.format_exc())
+        return None    
 
 @app.route('/registrar_peso_virtual', methods=['POST'])
 def registrar_peso_virtual():
-    """
-    Registra el peso ingresado manualmente después de la autorización
-    """
     try:
         data = request.get_json()
         codigo = data.get('codigo')
@@ -845,36 +904,34 @@ def registrar_peso_virtual():
                 'message': 'Faltan datos requeridos'
             })
         
-        # Registrar en Make.com
-        response = requests.post(
-            REGISTRO_PESO_WEBHOOK_URL,  # Agregar esta URL en las configuraciones
-            json={
-                'codigo': codigo,
-                'peso_bruto': peso,
-                'tipo_pesaje': 'virtual',
-                'fecha': datetime.now().strftime("%Y-%m-%d"),
-                'hora': datetime.now().strftime("%H:%M:%S")
-            }
+        # Fecha y hora actual
+        fecha_hora = datetime.now()
+        
+        # Generar PDF de pesaje
+        pdf_filename = generar_pdf_pesaje(
+            codigo=codigo,
+            peso_bruto=peso,
+            tipo_pesaje='virtual',
+            imagen_peso=None
         )
         
-        if response.status_code != 200:
-            return jsonify({
-                'success': False,
-                'message': 'Error registrando en el sistema'
-            })
-            
-        # Guardar datos del pesaje en sesión
-        session['peso_bruto'] = peso
-        session['tipo_pesaje'] = 'virtual'
-        session['fecha_pesaje'] = datetime.now().strftime("%Y-%m-%d")
-        session['hora_pesaje'] = datetime.now().strftime("%H:%M:%S")
-        
-        # Actualizar estado
-        actualizar_estado_guia(codigo, {
+        # Datos a guardar
+        datos_pesaje = {
             'estado': 'pesaje_completado',
             'peso_bruto': peso,
-            'tipo_pesaje': 'virtual'
-        })
+            'tipo_pesaje': 'virtual',
+            'fecha_pesaje': fecha_hora.strftime("%Y-%m-%d"),
+            'hora_pesaje': fecha_hora.strftime("%H:%M:%S"),
+            'pdf_pesaje': pdf_filename
+        }
+        
+        # Guardar en sesión
+        session.update(datos_pesaje)
+        
+        # Actualizar estado
+        actualizar_estado_guia(codigo, datos_pesaje)
+        
+        logger.info(f"Estado actualizado para guía {codigo}: {datos_pesaje}")
         
         return jsonify({'success': True})
         

@@ -30,3 +30,5 @@ __pycache__/
 *.pyc
 static/pdfs/*.pdf
 static/qr_*.png
+
+service-account.json

@@ -60,89 +60,127 @@
     <h4 class="text-center mb-2">{{ codigo_guia }}</h4>
     <h4 class="text-center mb-2">{{ nombre }}</h4>
 
-        <!-- Información General -->
-        <div class="card info-card mb-4">
-            <div class="card-header bg-light">
-                <h5 class="mb-0">Información General</h5>
-            </div>
-            <div class="card-body">
-                <div class="row">
-                    <div class="col-md-6">
-                        <p><strong>Fecha del Tiquete:</strong> 
-                            {% if fecha_tiquete %}
-                                {% if '-' in fecha_tiquete %}
-                                    {{ fecha_tiquete.replace('-', '/') }}
-                                {% else %}
-                                    {{ fecha_tiquete }}
-                                {% endif %}
+    <!-- Información General -->
+    <div class="card info-card mb-4">
+        <div class="card-header bg-light">
+            <h5 class="mb-0">Información General</h5>
+        </div>
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-6">
+                    <p><strong>Fecha del Tiquete:</strong> 
+                        {% if fecha_tiquete %}
+                            {% if '-' in fecha_tiquete %}
+                                {{ fecha_tiquete.replace('-', '/') }}
                             {% else %}
-                                No disponible
+                                {{ fecha_tiquete }}
                             {% endif %}
-                        </p>
-                        <p><strong>Fecha de Registro:</strong> {{ fecha_formato }}</p>
-                        <p><strong>Hora de Registro:</strong> {{ hora_formato }}</p>
-                        <p><strong>Código:</strong> {{ codigo if codigo else 'No disponible' }}</p>
-                        <p><strong>Placa:</strong> {{ placa if placa else 'No disponible' }}</p>
-                    </div>
+                        {% else %}
+                            No disponible
+                        {% endif %}
+                    </p>
+                    <p><strong>Fecha de Registro:</strong> {{ fecha_formato }}</p>
+                    <p><strong>Hora de Registro:</strong> {{ hora_formato }}</p>
+                    <p><strong>Código:</strong> {{ codigo if codigo else 'No disponible' }}</p>
+                    <p><strong>Placa:</strong> {{ placa if placa else 'No disponible' }}</p>
+                </div>
                     <div class="col-md-6">
-                        <p><strong>Racimos:</strong> {{ cantidad_racimos if cantidad_racimos else 'No disponible' }}</p>
-                        <p><strong>Transportador:</strong> {{ transportador if transportador else 'No disponible' }}</p>
-                        <p><strong>Estado:</strong> 
-                            <span class="badge {% if estado_actual == 'pesaje' %}bg-warning{% else %}bg-primary{% endif %}">
-                                {{ 'Pendiente Pesaje' if estado_actual == 'pesaje' else 'En Proceso' }}
-                            </span>
-                        </p>
+                    <p><strong>Racimos:</strong> {{ cantidad_racimos if cantidad_racimos else 'No disponible' }}</p>
+                    <p><strong>Transportador:</strong> {{ transportador if transportador else 'No disponible' }}</p>
+                    {% if estado_actual == 'pesaje_completado' %}
+                        <p><strong>Peso Bruto:</strong> {{ peso_bruto }} kg</p>
+                        <p><strong>Tipo de Pesaje:</strong> {{ tipo_pesaje|title }}</p>
+                        <p><strong>Hora de Pesaje:</strong> {{ hora_pesaje }}</p>
+                    {% endif %}
+                    <p><strong>Estado:</strong> 
+                        <span class="badge {% if estado_actual == 'pesaje' %}bg-warning{% else %}bg-primary{% endif %}">
+                            {{ 'Pendiente Pesaje' if estado_actual == 'pesaje' else 'En Proceso' }}
+                        </span>
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Estado del Proceso -->
+    <div class="card info-card mb-4">
+        <div class="card-header">
+            <h5 class="mb-0">Estado del Proceso</h5>
+        </div>
+        <div class="card-body">
+            <!-- Registro en Portería -->
+            <div class="status-bar completed">
+                ✓ Registro en Portería - Completado
+                <div class="process-info">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <span>
+                            Fecha: {{ fecha_registro }} Hora: {{ hora_formato }}
+                        </span>
+                        {% if pdf_filename %}
+                            <a href="/static/pdfs/{{ pdf_filename }}" 
+                               class="btn btn-light btn-sm" 
+                               download>
+                                Descargar PDF Registro
+                            </a>
+                        {% endif %}
+                    </div>
+                    <div class="mt-2">
+                        <small class="text-white-50">Código de guía: {{ codigo_guia }}</small>
                     </div>
                 </div>
             </div>
-        </div>
-
-        <!-- Estado del Proceso -->
-<div class="card info-card mb-4">
-    <div class="card-header">
-        <h5 class="mb-0">Estado del Proceso</h5>
-    </div>
-    <div class="card-body">
-        <div class="status-bar completed">
-            ✓ Registro en Portería - Completado
-            <div class="process-info">
-                <div class="d-flex justify-content-between align-items-center">
-                    <span>
-                        Fecha: {{ fecha_registro }} Hora: {{ hora_formato }}
-                    </span>
-                    {% if pdf_filename %}
-                        <a href="/static/pdfs/{{ pdf_filename }}" 
-                           class="btn btn-light btn-sm" 
-                           download>
-                            Descargar PDF
-                        </a>
-                    {% endif %}
+            
+            <!-- Estado de Pesaje -->
+<div class="status-bar {% if estado_actual == 'pesaje_completado' %}completed{% else %}{% if estado_actual == 'pesaje' %}current{% else %}pending{% endif %}{% endif %}">
+    {% if estado_actual != 'pesaje_completado' %}→{% endif %} Pesaje Inicial
+    {% if estado_actual == 'pesaje_completado' %}
+        <div class="process-info">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <span>Fecha: {{ fecha_pesaje }} Hora: {{ hora_pesaje }}</span>
+                    <br>
+                    <span>Peso bruto: {{ peso_bruto }} kg ({{ tipo_pesaje|title }})</span>
                 </div>
-                <div class="mt-2">
-                    <small class="text-white-50">Código de guía: {{ codigo_guia }}</small>
+                {% if pdf_pesaje %}
+                    <a href="/static/pdfs/{{ pdf_pesaje }}" 
+                       class="btn btn-light btn-sm" 
+                       download>
+                        Descargar PDF Pesaje
+                    </a>
+                {% endif %}
+            </div>
+            {% if imagen_pesaje %}
+                <div class="mt-3">
+                    <img src="/static/uploads/{{ imagen_pesaje }}" 
+                         class="img-fluid rounded" 
+                         style="max-height: 200px;"
+                         alt="Imagen del pesaje">
                 </div>
+            {% endif %}
+        </div>
+    {% else %}
+        <div class="process-info">
+            <button class="btn btn-process" onclick="window.location.href='/pesaje/{{ codigo }}'">
+                Iniciar Pesaje
+            </button>
+        </div>
+    {% endif %}
+</div>
+            
+            <!-- Clasificación de Fruta -->
+            <div class="status-bar {% if estado_actual == 'pesaje_completado' %}current{% else %}pending{% endif %}">
+                {% if estado_actual == 'pesaje_completado' %}→{% endif %} Clasificación de Fruta
             </div>
-        </div>
-        
-        <div class="status-bar {% if estado_actual == 'pesaje' %}current{% else %}pending{% endif %}">
-            {% if estado_actual == 'pesaje' %}→{% endif %} Pesaje Inicial
-            <div class="process-info">
-                <button class="btn btn-process" onclick="window.location.href='/pesaje/{{ codigo }}'">
-                    Iniciar Pesaje
-                </button>
+            
+            <!-- Pesaje Tara -->
+            <div class="status-bar pending">
+                Pesaje Tara
             </div>
-        </div>
-        
-        <div class="status-bar pending">
-            Clasificación de Fruta
-        </div>
-        
-        <div class="status-bar pending">
-            Pesaje Tara
-        </div>
-        
-        <div class="status-bar pending">
-            Salida
+            
+            <!-- Salida -->
+            <div class="status-bar pending">
+                Salida
+            </div>
         </div>
     </div>
 </div>

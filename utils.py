@@ -265,7 +265,106 @@ class Utils:
 
         return revalidation_data
 
+def obtener_datos_guia(self, codigo):
+    try:
+        # Obtener el código de guía actual
+        timestamp = datetime.now()
+        codigo_guia = f"{codigo}_{timestamp.strftime('%Y%m%d_%H%M%S')}"
 
+        datos = {
+            'codigo': codigo,
+            'codigo_guia': codigo_guia,
+            'nombre': '',
+            'fecha_registro': '',
+            'hora_registro': datetime.now().strftime("%H:%M:%S"),
+            'placa': '',
+            'transportador': '',
+            'cantidad_racimos': '',
+            'estado_actual': session.get('estado_actual', 'pesaje'),
+            'image_filename': session.get('image_filename', ''),
+            'pdf_filename': session.get('pdf_filename', ''),
+            # Datos de pesaje
+            'peso_bruto': session.get('peso_bruto', ''),
+            'tipo_pesaje': session.get('tipo_pesaje', ''),
+            'fecha_pesaje': session.get('fecha_pesaje', ''),
+            'hora_pesaje': session.get('hora_pesaje', ''),
+            'pdf_pesaje': session.get('pdf_pesaje', ''),
+            'imagen_pesaje': session.get('imagen_pesaje', '')
+        }
+        
+         # Obtener datos de la sesión
+        parsed_data = session.get('parsed_data', {})
+
+        if parsed_data and 'table_data' in parsed_data:
+            for row in parsed_data['table_data']:
+                campo = row['campo']
+                valor = row['original'] if row['sugerido'] == 'No disponible' else row['sugerido']
+                
+                if campo == 'Nombre del Agricultor':
+                    datos['nombre'] = valor
+                elif campo == 'Fecha':
+                    datos['fecha_registro'] = valor
+                elif campo == 'Placa':
+                    datos['placa'] = valor
+                elif campo == 'Cantidad de Racimos':
+                    datos['cantidad_racimos'] = valor
+                elif campo == 'Transportador':
+                    datos['transportador'] = valor
+        
+        # Extraer datos del parsed_data
+        if parsed_data and 'table_data' in parsed_data:
+            for row in parsed_data['table_data']:
+                campo = row['campo']
+                valor = row['original'] if row['sugerido'] == 'No disponible' else row['sugerido']
+                
+                if campo == 'Fecha':
+                    try:
+                        # Intentar diferentes formatos de fecha
+                        for fmt in ['%d-%m-%Y', '%Y-%m-%d', '%d/%m/%Y']:
+                            try:
+                                fecha_obj = datetime.strptime(valor, fmt)
+                                datos['fecha_registro'] = fecha_obj.strftime("%d/%m/%Y")
+                                break
+                            except ValueError:
+                                continue
+                        if not datos['fecha_registro']:
+                            datos['fecha_registro'] = valor
+                    except Exception as e:
+                        logger.error(f"Error parseando fecha: {str(e)}")
+                        datos['fecha_registro'] = valor
+                elif campo == 'Nombre del Agricultor':
+                    datos['nombre'] = valor
+                elif campo == 'Código':
+                    datos['codigo'] = valor
+                elif campo == 'Placa':
+                    datos['placa'] = valor
+                elif campo == 'Cantidad de Racimos':
+                    datos['cantidad_racimos'] = valor
+                elif campo == 'Transportador':
+                    datos['transportador'] = valor
+
+        # Si no se encontró fecha, usar la fecha actual
+        if not datos['fecha_registro']:
+            datos['fecha_registro'] = datetime.now().strftime("%d/%m/%Y")
+
+# Log para debug
+        logger.info(f"Datos de pesaje en sesión: peso={session.get('peso_bruto')}, "
+                   f"tipo={session.get('tipo_pesaje')}, "
+                   f"pdf={session.get('pdf_pesaje')}, "
+                   f"imagen={session.get('imagen_pesaje')}")            
+        
+        logger.info(f"Datos completos de guía: {datos}")
+        return datos
+        
+    except Exception as e:
+        logger.error(f"Error obteniendo datos de guía: {str(e)}")
+        logger.error(traceback.format_exc())
+        return {}
+
+    except Exception as e:
+        logger.error(f"Error obteniendo datos de guía: {str(e)}")
+        logger.error(traceback.format_exc())
+        return {}
 # Para mantener compatibilidad con código existente que no use la clase
 utils = None
 
